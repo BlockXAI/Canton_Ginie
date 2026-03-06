@@ -117,6 +117,9 @@ def run_compile_agent(daml_code: str, job_id: str) -> dict:
 
 
 def _sanitize_daml(code: str) -> str:
+    code = _fix_choice_ordering(code)
+    code = _fix_this_dot_refs(code)
+    code = _fix_bad_imports(code)
     lines = code.split("\n")
     result = []
     ensure_seen_in_template = False
@@ -159,6 +162,8 @@ def _sanitize_daml(code: str) -> str:
                              prev_line_stripped.startswith(f"{fn_name}:")
             if not has_annotation:
                 result.append(f"{fn_name} : Script ()")
+            indent = len(line) - len(line.lstrip())
+            line = " " * indent + re.sub(r'\s*=\s*script\s+do', " = do", stripped, count=1)
 
         line = re.sub(r'\b([A-Z][a-zA-Z0-9_]*)\.([a-z][a-zA-Z0-9_]*)\b', _strip_module_qualifier, line)
         result.append(line)
@@ -167,6 +172,58 @@ def _sanitize_daml(code: str) -> str:
     if pending_ensure is not None:
         result.append(pending_ensure)
 
+    return "\n".join(result)
+
+
+def _fix_this_dot_refs(code: str) -> str:
+    return re.sub(r'\bthis\.([a-z][a-zA-Z0-9_]*)\b', r'\1', code)
+
+
+def _fix_bad_imports(code: str) -> str:
+    bad_imports = {
+        r'^import DA\.Decimal.*$',
+        r'^import DA\.Numeric.*$',
+    }
+    lines = code.split("\n")
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if any(re.match(pat, stripped) for pat in bad_imports):
+            continue
+        result.append(line)
+    return "\n".join(result)
+
+
+def _fix_choice_ordering(code: str) -> str:
+    controller_re = re.compile(r'^(\s*)controller\b(.*)$')
+    with_block_re  = re.compile(r'^(\s*)with\s*$')
+
+    lines = code.split("\n")
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        cm = controller_re.match(line)
+        if cm:
+            indent = cm.group(1)
+            rest   = cm.group(2)
+            j = i + 1
+            if j < len(lines) and with_block_re.match(lines[j]):
+                with_lines = [lines[j]]
+                j += 1
+                while j < len(lines):
+                    wl = lines[j]
+                    if wl.strip() == '' or (wl.startswith(indent + '  ') and not wl.strip().startswith('do')):
+                        with_lines.append(wl)
+                        j += 1
+                    else:
+                        break
+                result.extend(with_lines)
+                result.append(line)
+                i = j
+                continue
+        result.append(line)
+        i += 1
     return "\n".join(result)
 
 

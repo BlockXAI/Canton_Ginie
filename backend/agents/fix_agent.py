@@ -26,6 +26,10 @@ Error: "Couldn't match type" → Check you're using Party for parties, Decimal f
 Error: "controller ... not party" → The controller must reference a Party field from the template
 Error: "Ambiguous occurrence" → Qualify the name or use a different identifier
 Error: "Multiple 'ensure' declarations" → A template can only have ONE ensure clause. Merge conditions: `ensure cond1 && cond2`
+Error: "parse error on input 'with'" → The `with` parameter block MUST come BEFORE `controller` in a choice definition
+Error: "Couldn't match type 'Scenario' with 'Script'" → Add `: Script ()` type annotation before the script function, e.g. `myFn : Script ()` on the line before `myFn = script do`
+Error: "Variable not in scope: this.fieldName" → Inside choices, use `fieldName` directly (no `this.` prefix)
+Error: "Could not find module 'DA.Decimal'" → Remove the import; Decimal is built-in in Daml, no import needed
 
 DAML SYNTAX REMINDERS:
 - `signatory` and `observer` must be directly inside `where` block (no indentation relative to where)
@@ -44,6 +48,8 @@ ERROR_EXPLANATIONS = {
     "missing_import":       "A module is referenced but not imported. Add `import ModuleName` at the top of the file.",
     "ambiguous_occurrence": "An identifier matches multiple definitions. Qualify it with the module name (e.g., `Module.identifier`).",
     "multiple_ensure":      "Each template can have at most ONE `ensure` clause. Merge all conditions: `ensure cond1 && cond2 && cond3`.",
+    "choice_order":          "`with` (parameters) MUST come BEFORE `controller` in a choice. Move the `with` block above `controller`.",
+    "scenario_not_script":   "Add `: Script ()` type annotation on the line BEFORE the `= script do` assignment.",
     "wrong_controller":     "The controller expression is not a Party. Use a field name of type Party from the template's `with` block.",
     "indentation_error":    "Indentation must be consistent. Use exactly 2 spaces for each level.",
     "unknown":              "Check the full error message and ensure Daml syntax rules are followed.",
@@ -56,10 +62,12 @@ def run_fix_agent(daml_code: str, compile_errors: list[dict], attempt_number: in
     error_descriptions = _format_errors_for_llm(compile_errors)
     needs_regeneration = _needs_full_regeneration(compile_errors)
 
+    raw_stderr = compile_errors[0].get("raw", "") if compile_errors else ""
+
     if needs_regeneration and attempt_number >= 2:
         user_message = _build_regeneration_message(daml_code, error_descriptions)
     else:
-        user_message = _build_fix_message(daml_code, error_descriptions)
+        user_message = _build_fix_message(daml_code, error_descriptions, raw_stderr)
 
     try:
         raw = call_llm(
@@ -95,16 +103,34 @@ def _format_errors_for_llm(errors: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def _build_fix_message(daml_code: str, error_descriptions: str) -> str:
+def _build_fix_message(daml_code: str, error_descriptions: str, raw_stderr: str = "") -> str:
+    raw_section = ""
+    if raw_stderr:
+        clean = _strip_sdk_banner(raw_stderr)
+        raw_section = f"\nRAW COMPILER OUTPUT (exact errors):\n{clean[:2000]}\n"
+
     return f"""Fix the following Daml code. It has compiler errors that need to be resolved.
 
 CURRENT DAML CODE:
 {daml_code}
 
-COMPILER ERRORS:
+COMPILER ERRORS (parsed):
 {error_descriptions}
+{raw_section}
+Return the complete corrected Daml file. Fix only what is broken. Start with `module`."""
 
-Return the complete corrected Daml file. Fix only what is broken."""
+
+def _strip_sdk_banner(text: str) -> str:
+    lines = text.split("\n")
+    result = []
+    skip = True
+    for line in lines:
+        if skip and ("SDK" in line or "github.com" in line or "Running single" in line
+                     or "[INFO]" in line or "Compiling" in line or line.strip() == ""):
+            continue
+        skip = False
+        result.append(line)
+    return "\n".join(result) if result else text
 
 
 def _build_regeneration_message(daml_code: str, error_descriptions: str) -> str:

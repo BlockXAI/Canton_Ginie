@@ -38,8 +38,18 @@ STRICT DAML SYNTAX RULES YOU MUST FOLLOW:
             myTest = script do ...
 19. CRITICAL: Choice return type MUST match what the do-block actually returns:
     If return type is `ContractId Foo`, the last line must be `create Foo with ...`
-    If return type is `()`, the last line must be `return ()` or `archive ...`
-    NEVER declare a non-() return type unless the do-block creates/returns that exact type
+    If return type is `()`, the last line must be `return ()` or `archive self`
+    `archive self` returns `()`, not a ContractId
+20. CRITICAL: `with` (parameters) MUST come BEFORE `controller` in choices:
+    WRONG: choice Foo : ()\n  controller p\n  with\n    x : Int\n  do ...
+    RIGHT:  choice Foo : ()\n  with\n    x : Int\n  controller p\n  do ...
+21. CRITICAL: Inside choice do-blocks, use field names DIRECTLY — never `this.fieldName`:
+    WRONG: assertMsg "" (this.borrower == p)
+    RIGHT:  assertMsg "" (borrower == p)
+22. CRITICAL: `Decimal` is built-in — NEVER write `import DA.Decimal` or `import DA.Numeric`
+23. CRITICAL: In Daml.Script, exercise choices with: `submit party do exercise cid ChoiceName with ...`
+    WRONG: exercise party cid ChoiceName
+    RIGHT:  submit party do exercise cid ChoiceName
 
 CANTON PARTY MODEL:
 - Parties are named actors with permissions (NOT wallet addresses)
