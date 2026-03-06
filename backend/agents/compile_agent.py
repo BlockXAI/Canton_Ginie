@@ -1,6 +1,6 @@
 import os
 import re
-import uuid
+import shutil
 import subprocess
 import structlog
 from pathlib import Path
@@ -19,6 +19,19 @@ dependencies:
   - daml-script
 """
 
+_SDK_INSTALL_INSTRUCTIONS = """
+Daml SDK is not installed or not on PATH.
+Install it with:
+
+    curl -sSL https://get.daml.com/ | sh
+
+Then either:
+  1. Add ~/.daml/bin to your PATH, OR
+  2. Set DAML_SDK_PATH=/path/to/daml in backend/.env
+
+After installing, restart the Ginie backend.
+""".strip()
+
 ERROR_PATTERNS = {
     "missing_signatory":    r"No signatory",
     "type_mismatch":        r"Couldn't match type|type mismatch",
@@ -32,16 +45,55 @@ ERROR_PATTERNS = {
 }
 
 
+def resolve_daml_sdk() -> str:
+    settings = get_settings()
+    candidates = [
+        settings.daml_sdk_path,
+        os.path.expanduser("~/.daml/bin/daml"),
+        shutil.which("daml") or "",
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    raise FileNotFoundError(_SDK_INSTALL_INSTRUCTIONS)
+
+
 def run_compile_agent(daml_code: str, job_id: str) -> dict:
     settings = get_settings()
+
+    try:
+        sdk_path = resolve_daml_sdk()
+    except FileNotFoundError as exc:
+        logger.error("Daml SDK not found", job_id=job_id)
+        return {
+            "success":       False,
+            "dar_path":      "",
+            "output":        "",
+            "errors":        [{"file": "", "line": 0, "column": 0, "message": str(exc),
+                               "error_type": "sdk_not_installed", "fixable": False, "raw": str(exc)}],
+            "raw_error":     str(exc),
+            "error_summary": str(exc),
+        }
+
     project_dir = _create_project_dir(daml_code, job_id, settings.dar_output_dir)
+    logger.info("Running compile agent", job_id=job_id, sdk=sdk_path, project_dir=project_dir)
 
-    logger.info("Running compile agent", job_id=job_id, project_dir=project_dir)
-
-    result = _run_daml_build(project_dir, settings.daml_sdk_path)
+    result = _run_daml_build(project_dir, sdk_path)
 
     if result["success"]:
         dar_path = _find_dar_file(project_dir)
+        if not dar_path:
+            logger.error("Build succeeded but no DAR found", job_id=job_id)
+            return {
+                "success":       False,
+                "dar_path":      "",
+                "output":        result["stdout"],
+                "errors":        [{"file": "", "line": 0, "column": 0,
+                                   "message": "Build process exited 0 but produced no DAR file.",
+                                   "error_type": "no_dar_output", "fixable": False, "raw": ""}],
+                "raw_error":     "No DAR produced",
+                "error_summary": "No DAR file produced despite successful build exit code",
+            }
         logger.info("Compilation succeeded", job_id=job_id, dar_path=dar_path)
         return {
             "success":  True,
@@ -50,12 +102,13 @@ def run_compile_agent(daml_code: str, job_id: str) -> dict:
             "errors":   [],
         }
     else:
-        errors = _parse_errors(result["stderr"] + result["stdout"])
+        combined = (result["stderr"] + "\n" + result["stdout"]).strip()
+        errors = _parse_errors(combined)
         logger.warning("Compilation failed", job_id=job_id, error_count=len(errors))
         return {
             "success":       False,
             "dar_path":      "",
-            "output":        result["stderr"],
+            "output":        combined,
             "errors":        errors,
             "raw_error":     result["stderr"],
             "error_summary": _summarize_errors(errors),
@@ -78,13 +131,24 @@ def _create_project_dir(daml_code: str, job_id: str, base_dir: str) -> str:
 
 
 def _run_daml_build(project_dir: str, daml_sdk_path: str) -> dict:
+    env = {**os.environ, "DAML_PROJECT": project_dir}
+    cmd = [daml_sdk_path, "build", "--project-root", project_dir]
+
+    logger.info("Spawning daml build", cmd=" ".join(cmd))
+
     try:
         proc = subprocess.run(
-            [daml_sdk_path, "build", "--project-root", project_dir],
+            cmd,
             capture_output=True,
             text=True,
-            timeout=120,
-            env={**os.environ, "DAML_PROJECT": project_dir},
+            timeout=180,
+            env=env,
+        )
+        logger.info(
+            "daml build exited",
+            code=proc.returncode,
+            stdout_len=len(proc.stdout),
+            stderr_len=len(proc.stderr),
         )
         return {
             "success": proc.returncode == 0,
@@ -92,50 +156,14 @@ def _run_daml_build(project_dir: str, daml_sdk_path: str) -> dict:
             "stderr":  proc.stderr,
             "code":    proc.returncode,
         }
-    except FileNotFoundError:
-        logger.warning("Daml SDK not found, running in mock mode", path=daml_sdk_path)
-        return _mock_compile(project_dir)
     except subprocess.TimeoutExpired:
+        logger.error("daml build timed out", project_dir=project_dir)
         return {
             "success": False,
             "stdout":  "",
-            "stderr":  "Compilation timed out after 120 seconds",
+            "stderr":  "Compilation timed out after 180 seconds. Check for infinite loops or large dependency graphs.",
             "code":    -1,
         }
-
-
-def _mock_compile(project_dir: str) -> dict:
-    main_daml = os.path.join(project_dir, "daml", "Main.daml")
-    with open(main_daml, "r") as f:
-        code = f.read()
-
-    issues = []
-    if "module " not in code:
-        issues.append("Missing module declaration")
-    if "signatory" not in code:
-        issues.append("Missing signatory in template")
-    if "template " not in code:
-        issues.append("No template defined")
-
-    if issues:
-        return {
-            "success": False,
-            "stdout":  "",
-            "stderr":  "Mock compile error: " + "; ".join(issues),
-            "code":    1,
-        }
-
-    mock_dar = os.path.join(project_dir, ".daml", "dist", "output.dar")
-    Path(os.path.dirname(mock_dar)).mkdir(parents=True, exist_ok=True)
-    with open(mock_dar, "wb") as f:
-        f.write(b"MOCK_DAR_" + code[:100].encode())
-
-    return {
-        "success": True,
-        "stdout":  "Mock compilation succeeded",
-        "stderr":  "",
-        "code":    0,
-    }
 
 
 def _find_dar_file(project_dir: str) -> str:

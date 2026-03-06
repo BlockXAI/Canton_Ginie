@@ -2,7 +2,7 @@ import os
 import structlog
 from typing import Optional
 from langchain_chroma import Chroma
-from langchain_community.embeddings import SentenceTransformerEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.schema import Document
 
 from rag.loader import load_daml_examples
@@ -13,7 +13,7 @@ _vector_store: Optional[Chroma] = None
 
 
 def get_embedding_function():
-    return SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+    return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 
 def build_vector_store(persist_dir: str = "./rag/chroma_db", force_rebuild: bool = False) -> Chroma:
