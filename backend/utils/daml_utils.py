@@ -70,15 +70,15 @@ def format_daml_code_summary(code: str) -> dict:
     }
 
 
-def get_daml_sdk_version(daml_sdk_path: str) -> str:
+def get_daml_sdk_version(_daml_sdk_path: str = "") -> str:
     import subprocess
+    from agents.compile_agent import resolve_daml_sdk
     try:
-        result = subprocess.run(
-            [daml_sdk_path, "version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.stdout.strip().split("\n")[0]
-    except Exception:
-        return "SDK not found (mock mode active)"
+        sdk = resolve_daml_sdk()
+        result = subprocess.run([sdk, "version"], capture_output=True, text=True, timeout=10)
+        first_line = result.stdout.strip().split("\n")[0]
+        return first_line or f"daml {sdk}"
+    except FileNotFoundError:
+        return "SDK not installed — run: curl -sSL https://get.daml.com/ | sh"
+    except Exception as exc:
+        return f"SDK error: {exc}"

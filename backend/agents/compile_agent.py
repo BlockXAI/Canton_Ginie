@@ -9,7 +9,7 @@ from config import get_settings
 
 logger = structlog.get_logger()
 
-DAML_YAML_TEMPLATE = """sdk-version: 2.9.4
+DAML_YAML_TEMPLATE = """sdk-version: 2.10.3
 name: {project_name}
 version: 0.0.1
 source: daml
