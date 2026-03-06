@@ -47,6 +47,15 @@ def _set_job(job_id: str, data: dict):
 _in_memory_jobs: dict = {}
 
 
+def _celery_has_workers() -> bool:
+    try:
+        from workers.celery_app import celery_app
+        result = celery_app.control.inspect(timeout=1.0).ping()
+        return bool(result)
+    except Exception:
+        return False
+
+
 def _run_pipeline_background(job_id: str, user_input: str, canton_environment: str, canton_url: str):
     from pipeline.orchestrator import run_pipeline
 
@@ -129,22 +138,32 @@ async def generate_contract(request: GenerateRequest, background_tasks: Backgrou
     _in_memory_jobs[job_id] = initial_data
     _set_job(job_id, initial_data)
 
-    try:
-        from workers.celery_app import generate_contract_task
-        generate_contract_task.delay(
-            job_id=job_id,
-            user_input=request.prompt,
-            canton_environment=request.canton_environment,
-            canton_url=canton_url,
-        )
-        logger.info("Job queued via Celery", job_id=job_id)
-    except Exception:
-        logger.warning("Celery unavailable, running in background thread", job_id=job_id)
+    if _celery_has_workers():
+        try:
+            from workers.celery_app import generate_contract_task
+            generate_contract_task.delay(
+                job_id=job_id,
+                user_input=request.prompt,
+                canton_environment=request.canton_environment or settings.canton_environment,
+                canton_url=canton_url,
+            )
+            logger.info("Job queued via Celery worker", job_id=job_id)
+        except Exception as exc:
+            logger.warning("Celery queue failed, falling back to background task", error=str(exc))
+            background_tasks.add_task(
+                _run_pipeline_background,
+                job_id=job_id,
+                user_input=request.prompt,
+                canton_environment=request.canton_environment or settings.canton_environment,
+                canton_url=canton_url,
+            )
+    else:
+        logger.info("No Celery workers active — running inline background task", job_id=job_id)
         background_tasks.add_task(
             _run_pipeline_background,
             job_id=job_id,
             user_input=request.prompt,
-            canton_environment=request.canton_environment,
+            canton_environment=request.canton_environment or settings.canton_environment,
             canton_url=canton_url,
         )
 
