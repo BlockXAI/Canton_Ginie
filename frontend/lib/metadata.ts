@@ -74,6 +74,27 @@ export const siteConfig = {
   manifest: "/site.webmanifest",
 };
 
+export const baseMetadata: Metadata = {
+  metadataBase: new URL(metaConfig.url),
+  title: {
+    default: metaConfig.name,
+    template: `%s — ${metaConfig.name}`,
+  },
+  description: metaConfig.description,
+  keywords: metaConfig.keywords,
+  authors: metaConfig.authors,
+  creator: metaConfig.creator,
+  robots: {
+    index: true,
+    follow: true,
+  },
+  alternates: siteConfig.alternates,
+  openGraph: siteConfig.openGraph,
+  twitter: siteConfig.twitter,
+  icons: siteConfig.icons,
+  manifest: siteConfig.manifest,
+};
+
 export function createMetadata({
   title,
   description,
