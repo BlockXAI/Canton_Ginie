@@ -11,11 +11,15 @@ import {
   ArrowDown,
 } from "lucide-react";
 import Image from "next/image";
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { FluidCursor } from "./fluid-cursor";
 
 export function Hero(): ReactNode {
   const sectionRef = useRef<HTMLElement>(null);
+  const [prompt, setPrompt] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const router = useRouter();
 
   const { scrollY, scrollYProgress } = useScroll({
     target: sectionRef,
@@ -53,13 +57,13 @@ export function Hero(): ReactNode {
           animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
           transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
         >
-          <span className="block">Design with AI —</span>
+          <span className="block">Smart Contracts —</span>
           <span className="block">
-            the{" "}
+            powered by{" "}
             <em className="text-background/80 dark:text-background/80 italic">
-              future
+              Ginie
             </em>{" "}
-            of creativity
+            on Canton
           </span>
         </motion.h1>
 
@@ -82,7 +86,10 @@ export function Hero(): ReactNode {
           >
             <div className="flex items-start gap-3">
               <textarea
-                placeholder="Ask Kraft anything..."
+                placeholder="Describe your DAML contract... e.g., Create a bond between issuer and investor"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                disabled={isSubmitting}
                 className="no-focus-ring mx-4 my-2 min-h-15 w-full resize-none bg-transparent text-gray-800 placeholder:text-gray-400"
                 rows={2}
               />
@@ -133,8 +140,27 @@ export function Hero(): ReactNode {
                 </button>
                 <button
                   type="button"
-                  className="focus-ring bg-foreground dark:bg-background hover:bg-foreground/90 dark:hover:bg-background/90 isolate flex h-12 w-12 cursor-pointer items-center justify-center rounded-full text-white transition-colors"
-                  aria-label="Send message"
+                  onClick={async () => {
+                    if (!prompt.trim() || isSubmitting) return;
+                    setIsSubmitting(true);
+                    try {
+                      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/generate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt, canton_environment: 'sandbox' }),
+                      });
+                      if (response.ok) {
+                        const data = await response.json();
+                        router.push(`/sandbox/${data.job_id}`);
+                      }
+                    } catch (error) {
+                      console.error(error);
+                      setIsSubmitting(false);
+                    }
+                  }}
+                  disabled={!prompt.trim() || isSubmitting}
+                  className="focus-ring bg-foreground dark:bg-background hover:bg-foreground/90 dark:hover:bg-background/90 isolate flex h-12 w-12 cursor-pointer items-center justify-center rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label="Generate contract"
                 >
                   <ArrowRight className="h-4 w-4" />
                 </button>
@@ -143,7 +169,7 @@ export function Hero(): ReactNode {
           </div>
 
           <p className="text-background/60 mt-6 text-center text-xs">
-            Kraft can make mistakes, but learns from them.
+            Ginie uses AI to generate Canton DAML smart contracts from your description.
           </p>
         </motion.div>
       </div>
@@ -159,8 +185,8 @@ export function Hero(): ReactNode {
         }}
       >
         <p className="text-foreground/60 dark:text-foreground/50 max-w-sm text-sm">
-          Kraft uses advanced AI to transform your ideas into stunning designs.
-          Just describe what you need.
+          Ginie transforms plain English into production-ready DAML contracts.
+          Deploy to Canton in minutes.
         </p>
 
         <ArrowDown
