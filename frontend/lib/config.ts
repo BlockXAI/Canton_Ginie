@@ -8,17 +8,17 @@
  */
 
 export const siteConfig = {
-  name: "Nexus AI",
-  tagline: "The AI Platform for Modern Teams",
+  name: "Ginie DAML",
+  tagline: "AI-Powered Canton Smart Contracts",
   description:
-    "Build, deploy, and scale AI-powered applications with enterprise-grade infrastructure. From ideation to production in minutes.",
-  url: "https://nexus-ai.com",
-  twitter: "@nexusai",
+    "Generate, compile, and deploy Canton DAML smart contracts from plain English. From idea to blockchain in minutes.",
+  url: "https://ginie-daml.com",
+  twitter: "@giniedaml",
 
   nav: {
     cta: {
-      text: "Start Free",
-      href: "#",
+      text: "Generate Contract",
+      href: "/generate",
     },
     signIn: {
       text: "Sign in",
