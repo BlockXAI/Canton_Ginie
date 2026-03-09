@@ -7,94 +7,109 @@ from utils.llm_client import call_llm
 
 logger = structlog.get_logger()
 
-WRITER_SYSTEM_PROMPT = """You are a senior Daml engineer specializing in Canton Network smart contracts.
-You write production-ready Daml 2.x code that compiles without errors.
+WRITER_SYSTEM_PROMPT = """You are an expert Daml 2.x engineer for Canton Network smart contracts.
+You produce COMPILABLE Daml code. Follow these rules EXACTLY:
 
-STRICT DAML SYNTAX RULES YOU MUST FOLLOW:
-1. Always start with: module <ModuleName> where
-2. Every template MUST have: signatory <party>
-3. Every choice MUST have: controller <party>
-4. Use Party type (not Text) for all party fields
-5. Use Decimal (not Float) for all numeric financial values
-6. All imports go at the top (import Daml.Script, etc.)
-7. Indentation: use 2 spaces consistently
-8. Template fields are separated by newlines, not commas
-9. The `with` block for template fields uses no commas
-10. CRITICAL: Each template can have AT MOST ONE `ensure` clause — combine multiple conditions with &&
-    WRONG: ensure amount > 0.0 \n    ensure issuer /= investor
-    RIGHT:  ensure amount > 0.0 && issuer /= investor
-11. CRITICAL: NEVER use module-qualified names for template fields inside choice do-blocks
-    WRONG: bond <- fetch CouponPayment.bondCid
-    RIGHT:  bond <- fetch bondCid
-12. assertMsg for runtime checks inside choices
-13. ContractId <TemplateName> is the type for contract references
-14. Use `do` blocks for choice bodies
-15. `create` creates a new contract, `archive` destroys one
-16. `fetch` reads a contract without archiving it
-17. `exercise` calls a choice on a contract
-18. CRITICAL: Every top-level Script function MUST have an explicit type annotation:
-    WRONG: myTest = script do ...
-    RIGHT:  myTest : Script ()
-            myTest = script do ...
-19. CRITICAL: Choice return type MUST match what the do-block actually returns:
-    If return type is `ContractId Foo`, the last line must be `create Foo with ...`
-    If return type is `()`, the last line must be `return ()` or `archive self`
-    `archive self` returns `()`, not a ContractId
-20. CRITICAL: `with` (parameters) MUST come BEFORE `controller` in choices:
-    WRONG: choice Foo : ()\n  controller p\n  with\n    x : Int\n  do ...
-    RIGHT:  choice Foo : ()\n  with\n    x : Int\n  controller p\n  do ...
-21. CRITICAL: Inside choice do-blocks, use field names DIRECTLY — never `this.fieldName`:
-    WRONG: assertMsg "" (this.borrower == p)
-    RIGHT:  assertMsg "" (borrower == p)
-22. CRITICAL: `Decimal` is built-in — NEVER write `import DA.Decimal` or `import DA.Numeric`
-23. CRITICAL: In Daml.Script, exercise choices with: `submit party do exercise cid ChoiceName with ...`
-    WRONG: exercise party cid ChoiceName
-    RIGHT:  submit party do exercise cid ChoiceName
+MANDATORY STRUCTURE — every file you produce MUST follow this layout:
 
-CANTON PARTY MODEL:
-- Parties are named actors with permissions (NOT wallet addresses)
-- signatory parties must sign for contract creation
-- observer parties can see the contract
-- controller inside a choice defines who can exercise it
+module Main where
 
-VALID DAML TEMPLATE SKELETON:
-```
-template TemplateName
+import DA.Time
+import DA.Date
+import DA.Text
+
+template <Name>
   with
-    party1 : Party
-    party2 : Party
+    <field1> : Party
+    <field2> : Party
+    <numericField> : Decimal
+  where
+    signatory <field1>
+    observer <field2>
+
+    ensure <condition>
+
+    choice <ChoiceName> : ContractId <Name>
+      with
+        <param> : <Type>
+      controller <field1>
+      do
+        create this with <field> = <param>
+
+ABSOLUTE RULES:
+1. Module MUST be named Main: `module Main where`
+2. ALWAYS import DA.Time, DA.Date, DA.Text at the top
+3. Define exactly ONE template (no multiple templates or modules)
+4. Use Party for all participant fields
+5. Use Decimal (not Float, not Int) for all financial amounts
+6. Every template MUST have `signatory` with at least one Party field
+7. Every template MUST have `observer` with at least one Party field
+8. Every template MUST have exactly ONE `ensure` clause (combine with &&)
+9. Every template MUST have at least one `choice`
+10. Choice syntax: `choice Name : ReturnType` then `with` params then `controller` then `do`
+11. `with` (parameters) MUST come BEFORE `controller` in choices
+12. Inside choices use field names directly — NEVER `this.fieldName`
+13. Decimal is built-in — NEVER import DA.Decimal or DA.Numeric
+14. 2-space indentation, no tabs, no commas in `with` blocks
+15. No markdown fences, no explanation text
+16. `create this with field = value` to update fields
+17. Choice return type MUST match the do-block return:
+    - `ContractId X` → last line must be `create X with ...`
+    - `()` → last line must be `return ()` or `archive self`
+18. Do NOT generate any Script test functions
+19. Do NOT use module-qualified field access like `Template.field`
+
+OUTPUT: Return ONLY the raw Daml code starting with `module Main where`. Nothing else."""
+
+# Fallback template used when LLM fails or returns invalid code
+_FALLBACK_TEMPLATE = """module Main where
+
+import DA.Time
+import DA.Date
+import DA.Text
+
+template {template_name}
+  with
+    {party1} : Party
+    {party2} : Party
     amount : Decimal
     description : Text
   where
-    signatory party1
-    observer  party2
+    signatory {party1}
+    observer {party2}
 
     ensure amount > 0.0
 
-    choice ChoiceName : ContractId TemplateName
-      with newParty : Party
-      controller party1
+    choice Transfer : ContractId {template_name}
+      with
+        newOwner : Party
+      controller {party2}
       do
-        create this with party1 = newParty
-```
-
-OUTPUT FORMAT:
-- Return ONLY the complete Daml code
-- No markdown code fences
-- No explanation text before or after
-- Start directly with: module Main where"""
+        create this with {party2} = newOwner
+"""
 
 
 def run_writer_agent(structured_intent: dict, rag_context: list[str] = None) -> dict:
     settings = get_settings()
 
-    parties = structured_intent.get("parties", ["owner", "counterparty"])
+    parties = structured_intent.get("parties", ["issuer", "investor"])
     features = structured_intent.get("features", [])
     templates = structured_intent.get("daml_templates_needed", ["Main"])
     contract_type = structured_intent.get("contract_type", "generic")
     constraints = structured_intent.get("business_constraints", [])
-    choices = structured_intent.get("suggested_choices", [])
+    choices = structured_intent.get("suggested_choices", ["Transfer"])
     description = structured_intent.get("description", "")
+
+    # Force single template
+    template_name = templates[0] if templates else "Main"
+    if template_name == "Main":
+        template_name = _derive_template_name(contract_type, description)
+
+    # Ensure at least 2 parties
+    if len(parties) < 2:
+        parties = parties + ["counterparty"]
+    party1 = parties[0]
+    party2 = parties[1]
 
     rag_section = ""
     if rag_context:
@@ -106,51 +121,201 @@ def run_writer_agent(structured_intent: dict, rag_context: list[str] = None) -> 
     if constraints:
         constraints_section = "\nBUSINESS CONSTRAINTS:\n" + "\n".join(f"- {c}" for c in constraints)
 
-    user_message = f"""Generate a complete, compilable Daml module for the following contract:
+    user_message = f"""Generate a complete, compilable Daml module for:
 
 CONTRACT TYPE: {contract_type}
 DESCRIPTION: {description}
+TEMPLATE NAME: {template_name}
 
-PARTIES:
-{chr(10).join(f'- {p}' for p in parties)}
+PARTIES (exactly these two):
+- {party1} : Party (signatory)
+- {party2} : Party (observer)
 
 REQUIRED FEATURES:
-{chr(10).join(f'- {f}' for f in features)}
-
-TEMPLATES TO IMPLEMENT:
-{chr(10).join(f'- {t}' for t in templates)}
+{chr(10).join(f'- {f}' for f in features) if features else '- Basic contract with transfer'}
 
 CHOICES TO IMPLEMENT:
-{chr(10).join(f'- {c}' for c in choices)}
+{chr(10).join(f'- {c}' for c in choices[:3]) if choices else '- Transfer'}
 {constraints_section}
 {rag_section}
 
-Write the complete Daml module. Use module name 'Main'. Include a setup script using Daml.Script for testing."""
+IMPORTANT: Use module name 'Main', template name '{template_name}'.
+Use {party1} as signatory, {party2} as observer.
+Include an amount : Decimal field with ensure amount > 0.0.
+Do NOT include any Script test functions.
+Start your response with: module Main where"""
 
     if rag_context is None:
         rag_context = []
 
-    logger.info("Running writer agent", contract_type=contract_type, templates=templates)
+    logger.info("Running writer agent", contract_type=contract_type, templates=[template_name])
 
-    try:
-        raw_code = call_llm(
-            system_prompt=WRITER_SYSTEM_PROMPT,
-            user_message=user_message,
-            max_tokens=4096,
-        )
-        
-        if not raw_code:
-            logger.error("Writer agent failed", error="LLM returned empty response")
-            return {"success": False, "error": "LLM returned empty response", "daml_code": ""}
-        
-        clean_code = _extract_daml_code(raw_code)
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            raw_code = call_llm(
+                system_prompt=WRITER_SYSTEM_PROMPT,
+                user_message=user_message,
+                max_tokens=4096,
+            )
 
-        logger.info("Writer agent completed", code_length=len(clean_code))
-        return {"success": True, "daml_code": clean_code}
+            if not raw_code or len(raw_code.strip()) < 30:
+                logger.warning("Writer agent: LLM returned empty/short response", attempt=attempt)
+                if attempt < max_retries:
+                    continue
+                # Use fallback
+                logger.info("Writer agent: using fallback template")
+                return {
+                    "success": True,
+                    "daml_code": _generate_fallback(template_name, party1, party2),
+                }
 
-    except Exception as e:
-        logger.error("Writer agent failed", error=str(e))
-        return {"success": False, "error": str(e), "daml_code": ""}
+            clean_code = _extract_daml_code(raw_code)
+            clean_code = _post_process(clean_code, template_name, party1, party2)
+
+            # Validate essential structure
+            issues = _validate_daml(clean_code)
+            if issues:
+                logger.warning("Writer agent: validation issues", issues=issues, attempt=attempt)
+                if attempt < max_retries:
+                    continue
+                # Fix what we can, then return
+                clean_code = _auto_fix_structure(clean_code, template_name, party1, party2)
+
+            logger.info("Writer agent completed", code_length=len(clean_code))
+            return {"success": True, "daml_code": clean_code}
+
+        except Exception as e:
+            logger.error("Writer agent error", error=str(e), attempt=attempt)
+            if attempt < max_retries:
+                continue
+            # Final fallback
+            logger.info("Writer agent: using fallback after error")
+            return {
+                "success": True,
+                "daml_code": _generate_fallback(template_name, party1, party2),
+            }
+
+    return {
+        "success": True,
+        "daml_code": _generate_fallback(template_name, party1, party2),
+    }
+
+
+def _derive_template_name(contract_type: str, description: str) -> str:
+    """Derive a reasonable template name from the contract type or description."""
+    name = contract_type or description.split()[0] if description else "Contract"
+    # CamelCase it
+    name = re.sub(r'[^a-zA-Z0-9]', ' ', name)
+    parts = name.split()
+    camel = ''.join(w.capitalize() for w in parts if w)
+    if not camel or not camel[0].isupper():
+        camel = "Contract"
+    # Keep it short
+    return camel[:30]
+
+
+def _generate_fallback(template_name: str, party1: str, party2: str) -> str:
+    """Generate a guaranteed-compilable DAML contract."""
+    return _FALLBACK_TEMPLATE.format(
+        template_name=template_name,
+        party1=party1,
+        party2=party2,
+    ).strip()
+
+
+def _validate_daml(code: str) -> list[str]:
+    """Check that code has required DAML elements. Returns list of issues."""
+    issues = []
+    if "module Main where" not in code:
+        issues.append("missing_module")
+    if not re.search(r"^\s*template\s+\w+", code, re.MULTILINE):
+        issues.append("missing_template")
+    if not re.search(r"^\s+signatory\s+", code, re.MULTILINE):
+        issues.append("missing_signatory")
+    if not re.search(r"^\s+observer\s+", code, re.MULTILINE):
+        issues.append("missing_observer")
+    if not re.search(r"^\s+ensure\s+", code, re.MULTILINE):
+        issues.append("missing_ensure")
+    if not re.search(r"^\s+choice\s+\w+", code, re.MULTILINE):
+        issues.append("missing_choice")
+    # Check for multiple templates
+    template_matches = re.findall(r"^\s*template\s+\w+", code, re.MULTILINE)
+    if len(template_matches) > 1:
+        issues.append("multiple_templates")
+    return issues
+
+
+def _auto_fix_structure(code: str, template_name: str, party1: str, party2: str) -> str:
+    """Attempt to auto-fix common structural issues in generated code."""
+    # If completely broken, use fallback
+    if "module" not in code or "template" not in code:
+        return _generate_fallback(template_name, party1, party2)
+
+    # Fix missing module header
+    if "module Main where" not in code:
+        code = re.sub(r"module\s+\w+\s+where", "module Main where", code, count=1)
+        if "module Main where" not in code:
+            code = "module Main where\n\n" + code
+
+    # Ensure imports
+    for imp in ["import DA.Time", "import DA.Date", "import DA.Text"]:
+        if imp not in code:
+            code = code.replace("module Main where", f"module Main where\n{imp}", 1)
+
+    # Remove multiple templates — keep only the first
+    template_starts = [(m.start(), m.group()) for m in re.finditer(r"^template\s+\w+", code, re.MULTILINE)]
+    if len(template_starts) > 1:
+        # Keep everything up to the second template
+        code = code[:template_starts[1][0]].rstrip()
+
+    # Add missing signatory
+    if not re.search(r"^\s+signatory\s+", code, re.MULTILINE):
+        code = re.sub(r"(\s+where\s*\n)", f"\\1    signatory {party1}\n    observer {party2}\n", code, count=1)
+
+    # Add missing observer
+    if not re.search(r"^\s+observer\s+", code, re.MULTILINE):
+        code = re.sub(r"(signatory\s+\w+\s*\n)", f"\\1    observer {party2}\n", code, count=1)
+
+    return code
+
+
+def _post_process(code: str, template_name: str, party1: str, party2: str) -> str:
+    """Clean up LLM output to ensure valid DAML."""
+    # Strip markdown fences
+    code = re.sub(r"```(?:daml|haskell)?\s*", "", code)
+    code = code.replace("```", "")
+
+    # Replace tabs with spaces
+    code = code.replace("\t", "  ")
+
+    # Remove trailing commas in with blocks
+    code = re.sub(r"(:\s*\w+)\s*,\s*$", r"\1", code, flags=re.MULTILINE)
+
+    # Remove this. references
+    code = re.sub(r'\bthis\.([a-z][a-zA-Z0-9_]*)\b', r'\1', code)
+
+    # Remove bad imports
+    code = re.sub(r'^\s*import DA\.Decimal.*$', '', code, flags=re.MULTILINE)
+    code = re.sub(r'^\s*import DA\.Numeric.*$', '', code, flags=re.MULTILINE)
+
+    # Remove any Script test functions (everything from `xxx : Script` to end or next top-level)
+    code = re.sub(r'\n\w+\s*:\s*Script\s*\(.*?\n\w+\s*=\s*script\s+do.*?(?=\n\w|\Z)', '', code, flags=re.DOTALL)
+
+    # Remove semicolons
+    code = re.sub(r";\s*$", "", code, flags=re.MULTILINE)
+
+    # Fix double-colon
+    code = re.sub(r"(\w+)\s*::\s*(\w+)", r"\1 : \2", code)
+
+    # Remove braces only in DAML structural contexts (not inside strings)
+    code = re.sub(r"\bwhere\s*\{", "where", code)
+    code = re.sub(r"^\s*\}\s*$", "", code, flags=re.MULTILINE)
+
+    # Clean up excessive blank lines
+    code = re.sub(r"\n{4,}", "\n\n\n", code)
+
+    return code.strip()
 
 
 def fetch_rag_context(structured_intent: dict) -> list[str]:

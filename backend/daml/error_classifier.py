@@ -4,16 +4,20 @@ from typing import Optional
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
 
+_MAX_ERRORS = 10
+
 _ERROR_PATTERNS: list[tuple[str, str]] = [
-    ("multiple_declaration", r"Multiple declarations of|already defined|duplicate"),
-    ("type_mismatch",        r"Couldn't match (expected )?type|type mismatch|Couldn't match"),
-    ("missing_signatory",    r"No signatory|missing signatory|no signatories"),
-    ("parse_error",          r"[Pp]arse error|lexical error|unexpected token"),
-    ("unknown_variable",     r"Variable not in scope|Not in scope|not in scope"),
-    ("import_error",         r"Could not find module|Module.*not found|Failed to load interface"),
-    ("indentation_error",    r"[Ii]ndentation|dedent|unexpected indent"),
-    ("choice_error",         r"choice.*not found|Invalid choice|unexpected.*choice"),
-    ("ensure_error",         r"[Ee]nsure.*failed|Predicate failed|ensure"),
+    ("multiple_declaration", r"Multiple declarations of|already defined|Duplicate.*definition|duplicate"),
+    ("missing_signatory",    r"No signatory|missing signatory|no signatories|Requires.*signatory"),
+    ("unknown_variable",     r"Variable not in scope|Not in scope|not in scope|Undefined variable"),
+    ("missing_import",       r"Could not find module|Module.*not found|Failed to load interface|No module named"),
+    ("type_mismatch",        r"Couldn't match (expected )?type|type mismatch|Couldn't match|Expected.*but got|incompatible types"),
+    ("parse_error",          r"[Pp]arse error|lexical error|unexpected token|Unexpected.*in.*expression"),
+    ("choice_error",         r"choice.*not found|Invalid choice|unexpected.*choice|controller.*not.*party"),
+    ("indentation_error",    r"[Ii]ndentation|dedent|unexpected indent|Incorrect indentation"),
+    ("ensure_error",         r"[Ee]nsure.*failed|Predicate failed|Multiple.*ensure"),
+    ("missing_do",           r"do.*expected|Missing.*do"),
+    ("ambiguous_occurrence", r"[Aa]mbiguous occurrence|Ambiguous.*name"),
 ]
 
 _FILE_LINE_PATTERN = re.compile(
@@ -38,7 +42,7 @@ class ErrorClassifier:
         lines = clean.splitlines()
         n = len(lines)
         i = 0
-        while i < n:
+        while i < n and len(errors) < _MAX_ERRORS:
             file_m = _STRUCTURED_FILE.match(lines[i].strip())
             if file_m:
                 file_name = file_m.group(1)
@@ -63,7 +67,6 @@ class ErrorClassifier:
                     j += 1
 
                 full_msg = " ".join(msg_lines).strip()
-                # The actual file:line: error line is embedded inside msg_lines after ANSI strip
                 for ml in msg_lines:
                     fm = _FILE_LINE_PATTERN.match(ml)
                     if fm:
@@ -91,7 +94,7 @@ class ErrorClassifier:
         # --- Pass 2: classic file:line:col: error lines ---
         if not errors:
             i = 0
-            while i < n:
+            while i < n and len(errors) < _MAX_ERRORS:
                 match = _FILE_LINE_PATTERN.match(lines[i].strip())
                 if match:
                     file_name = match.group(1)
@@ -136,7 +139,7 @@ class ErrorClassifier:
                 "context": [],
             })
 
-        return errors
+        return errors[:_MAX_ERRORS]
 
     def _classify(self, message: str) -> str:
         for error_type, pattern in _ERROR_PATTERNS:
@@ -146,14 +149,17 @@ class ErrorClassifier:
 
     def suggest_fix(self, error: dict) -> str:
         suggestions = {
-            "type_mismatch":     "Check field types. Use Decimal for numbers, Party for parties.",
-            "missing_signatory": "Add 'signatory <party_field>' immediately after the 'where' clause.",
-            "parse_error":       "Check syntax: indentation, missing commas, or mismatched brackets.",
-            "unknown_variable":  "Import the required module or verify the variable name spelling.",
-            "import_error":      "Add the missing import at the top of the file, e.g. 'import DA.Time'.",
-            "indentation_error": "DAML uses 2-space indentation. Replace tabs with spaces.",
-            "choice_error":      "Verify choice syntax: controller must appear before do.",
-            "ensure_error":      "Ensure clause must evaluate to Bool. Check the condition expression.",
-            "unknown":           "Review the full compiler message and DAML documentation.",
+            "multiple_declaration": "Remove the duplicate template or choice definition.",
+            "missing_signatory":    "Add 'signatory <party_field>' immediately after the 'where' clause.",
+            "unknown_variable":     "Import the required module or verify the variable name spelling.",
+            "missing_import":       "Add the missing import at the top of the file, e.g. 'import DA.Time'.",
+            "type_mismatch":        "Check field types. Use Decimal for numbers, Party for parties.",
+            "parse_error":          "Check syntax: indentation, missing commas, or mismatched brackets.",
+            "choice_error":         "Verify choice syntax: with params before controller, then do.",
+            "indentation_error":    "DAML uses 2-space indentation. Replace tabs with spaces.",
+            "ensure_error":         "Use exactly ONE ensure clause. Combine with &&.",
+            "missing_do":           "Add 'do' keyword after controller line.",
+            "ambiguous_occurrence": "Qualify the name or rename to avoid conflict.",
+            "unknown":              "Review the full compiler message and DAML documentation.",
         }
         return suggestions.get(error.get("type", "unknown"), suggestions["unknown"])

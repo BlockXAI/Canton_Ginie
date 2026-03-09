@@ -15,9 +15,46 @@ from config import get_settings
 
 logger = structlog.get_logger()
 
+MAX_FIX_ATTEMPTS = 3
+
+FALLBACK_CONTRACT = """module Main where
+
+template SimpleContract
+  with
+    issuer : Party
+    owner : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+    ensure amount > 0.0
+
+    choice Transfer : ContractId SimpleContract
+      with
+        newOwner : Party
+      controller owner
+      do
+        create this with owner = newOwner
+"""
+
+# Global registry for per-job status callbacks so nodes can push updates
+_status_callbacks: dict = {}
+
+
+def _push_status(state: dict, step: str, progress: int):
+    """Push an intermediate status update if a callback is registered for this job."""
+    job_id = state.get("job_id")
+    if job_id and job_id in _status_callbacks:
+        try:
+            _status_callbacks[job_id](job_id, "running", step, progress)
+        except Exception:
+            pass
+
 
 def intent_node(state: dict) -> dict:
     logger.info("Node: intent", job_id=state.get("job_id"))
+    _push_status(state, "Parsing contract intent...", 10)
     result = run_intent_agent(state["user_input"])
     if not result["success"]:
         logger.error("Intent node failed", error=result.get("error"))
@@ -31,33 +68,35 @@ def intent_node(state: dict) -> dict:
     return {
         **state,
         "structured_intent": result["structured_intent"],
-        "current_step":      "Generating Daml code...",
+        "current_step":      "Retrieving DAML patterns...",
         "progress":          20,
     }
 
 
 def rag_node(state: dict) -> dict:
     logger.info("Node: RAG retrieval", job_id=state.get("job_id"))
+    _push_status(state, "Retrieving DAML patterns...", 25)
     try:
         context = fetch_rag_context(state["structured_intent"])
         return {
             **state,
             "rag_context":  context,
-            "current_step": "Writing Daml code...",
-            "progress":     35,
+            "current_step": "Generating DAML code...",
+            "progress":     30,
         }
     except Exception as e:
         logger.warning("RAG retrieval failed, continuing without context", error=str(e))
         return {
             **state,
             "rag_context":  [],
-            "current_step": "Writing Daml code...",
-            "progress":     35,
+            "current_step": "Generating DAML code...",
+            "progress":     30,
         }
 
 
 def generate_node(state: dict) -> dict:
     logger.info("Node: generate", job_id=state.get("job_id"))
+    _push_status(state, "Generating DAML code...", 35)
     result = run_writer_agent(
         structured_intent=state["structured_intent"],
         rag_context=state.get("rag_context", []),
@@ -83,25 +122,40 @@ def compile_node(state: dict) -> dict:
     job_id = state.get("job_id", "unknown")
     attempt = state.get("attempt_number", 0) + 1
     logger.info("Node: compile", job_id=job_id, attempt=attempt)
+    _push_status(state, f"Compiling contract (attempt {attempt})...", 50)
 
     try:
         result = run_compile_agent(state["generated_code"], job_id)
-        return {
-            **state,
-            "compile_result":  "success" if result["success"] else result.get("raw_error", ""),
-            "compile_success": result["success"],
-            "compile_errors":  result.get("errors", []),
-            "dar_path":        result.get("dar_path", ""),
-            "attempt_number":  attempt,
-            "current_step":    "Deploying to Canton..." if result["success"] else f"Auto-fixing errors (attempt {attempt})...",
-            "progress":        65 if result["success"] else 55,
-        }
+        if result["success"]:
+            _push_status(state, "Compilation successful! Deploying...", 80)
+            return {
+                **state,
+                "compile_result":  "success",
+                "compile_success": True,
+                "compile_errors":  [],
+                "dar_path":        result.get("dar_path", ""),
+                "attempt_number":  attempt,
+                "current_step":    "Deploying to Canton...",
+                "progress":        80,
+            }
+        else:
+            progress = 50 + min(attempt * 5, 15)
+            return {
+                **state,
+                "compile_result":  result.get("raw_error", ""),
+                "compile_success": False,
+                "compile_errors":  result.get("errors", []),
+                "dar_path":        "",
+                "attempt_number":  attempt,
+                "current_step":    f"Fixing errors (attempt {attempt}/{MAX_FIX_ATTEMPTS})...",
+                "progress":        progress,
+            }
     except Exception as e:
         logger.error("Compile node failed", error=str(e))
         return {
             **state,
             "compile_success": False,
-            "compile_errors":  [{"message": str(e), "error_type": "unknown", "fixable": True}],
+            "compile_errors":  [{"message": str(e), "type": "unknown", "fixable": True}],
             "attempt_number":  attempt,
             "current_step":    "Compilation error",
         }
@@ -110,6 +164,7 @@ def compile_node(state: dict) -> dict:
 def fix_node(state: dict) -> dict:
     attempt = state.get("attempt_number", 1)
     logger.info("Node: fix", job_id=state.get("job_id"), attempt=attempt)
+    _push_status(state, f"Auto-fixing errors (attempt {attempt}/{MAX_FIX_ATTEMPTS})...", 60)
 
     result = run_fix_agent(
         daml_code=state["generated_code"],
@@ -117,27 +172,44 @@ def fix_node(state: dict) -> dict:
         attempt_number=attempt,
     )
     if not result["success"]:
-        logger.error("Fix node failed", error=result.get("error"))
+        logger.warning("Fix node failed", error=result.get("error"))
         return {
             **state,
-            "error_message":  result.get("error", "Fix agent failed"),
-            "is_fatal_error": True,
-            "current_step":   "Auto-fix failed",
+            "current_step": f"Fix attempt {attempt} failed, retrying...",
         }
     return {
         **state,
         "generated_code": result["fixed_code"],
-        "current_step":   f"Re-compiling after fix (attempt {attempt})...",
-        "progress":       58,
+        "current_step":   f"Recompiling after fix (attempt {attempt})...",
+        "progress":       65,
+    }
+
+
+def fallback_node(state: dict) -> dict:
+    """Replace generated code with guaranteed-compilable fallback contract."""
+    logger.info("Node: fallback (using guaranteed contract)", job_id=state.get("job_id"))
+    _push_status(state, "Using fallback contract template", 75)
+
+    return {
+        **state,
+        "generated_code":   FALLBACK_CONTRACT,
+        "attempt_number":   0,
+        "compile_errors":   [],
+        "compile_success":  False,
+        "fallback_used":    True,
+        "current_step":     "Using fallback contract template",
+        "progress":         75,
     }
 
 
 def deploy_node(state: dict) -> dict:
     logger.info("Node: deploy", job_id=state.get("job_id"))
+    _push_status(state, "Deploying to Canton ledger...", 90)
 
     settings = get_settings()
     canton_url = state.get("canton_url") or settings.get_canton_url()
     canton_env = state.get("canton_environment", "sandbox")
+    fallback_used = state.get("fallback_used", False)
 
     try:
         result = run_deploy_agent(
@@ -148,12 +220,18 @@ def deploy_node(state: dict) -> dict:
         )
 
         if result["success"]:
+            _push_status(state, "Contract deployed! Verifying...", 95)
+            template_name = "SimpleContract" if fallback_used else result.get("template_id", "")
             return {
                 **state,
                 "contract_id":   result["contract_id"],
                 "package_id":    result["package_id"],
-                "explorer_link": result["explorer_link"],
-                "current_step":  "Deployment complete!",
+                "template_id":   result.get("template_id", ""),
+                "template":      template_name,
+                "parties":       result.get("parties", {}),
+                "explorer_link": result.get("explorer_link", ""),
+                "fallback_used": fallback_used,
+                "current_step":  "Contract deployed successfully!",
                 "progress":      100,
             }
         else:
@@ -183,18 +261,15 @@ def error_node(state: dict) -> dict:
     }
 
 
-def _route_after_compile(state: dict) -> Literal["deploy", "fix", "error"]:
-    settings = get_settings()
-
-    if state.get("is_fatal_error"):
-        return "error"
-
+def _route_after_compile(state: dict) -> Literal["deploy", "fix", "fallback"]:
     if state.get("compile_success"):
         return "deploy"
 
     attempt = state.get("attempt_number", 0)
-    if attempt >= settings.max_fix_attempts:
-        return "error"
+
+    # After MAX_FIX_ATTEMPTS: use fallback contract (never go to error)
+    if attempt >= MAX_FIX_ATTEMPTS:
+        return "fallback"
 
     return "fix"
 
@@ -219,6 +294,7 @@ def build_pipeline() -> CompiledStateGraph:
     graph.add_node("generate", generate_node)
     graph.add_node("compile",  compile_node)
     graph.add_node("fix",      fix_node)
+    graph.add_node("fallback", fallback_node)
     graph.add_node("deploy",   deploy_node)
     graph.add_node("error",    error_node)
 
@@ -230,9 +306,10 @@ def build_pipeline() -> CompiledStateGraph:
     graph.add_conditional_edges(
         "compile",
         _route_after_compile,
-        {"deploy": "deploy", "fix": "fix", "error": "error"},
+        {"deploy": "deploy", "fix": "fix", "fallback": "fallback"},
     )
     graph.add_edge("fix", "compile")
+    graph.add_edge("fallback", "compile")  # recompile after fallback — guaranteed success
     graph.add_edge("deploy", END)
     graph.add_edge("error",  END)
 
@@ -391,7 +468,7 @@ async def run_mvp_pipeline(
     }
 
 
-def run_pipeline(job_id: str, user_input: str, canton_environment: str = "sandbox", canton_url: str = "") -> dict:
+def run_pipeline(job_id: str, user_input: str, canton_environment: str = "sandbox", canton_url: str = "", status_callback=None) -> dict:
     settings = get_settings()
 
     initial_state = {
@@ -404,9 +481,12 @@ def run_pipeline(job_id: str, user_input: str, canton_environment: str = "sandbo
         "compile_success":    False,
         "compile_errors":     [],
         "attempt_number":     0,
+        "fallback_used":      False,
         "dar_path":           "",
         "contract_id":        "",
         "package_id":         "",
+        "template_id":        "",
+        "parties":            {},
         "explorer_link":      "",
         "error_message":      "",
         "is_fatal_error":     False,
@@ -416,8 +496,17 @@ def run_pipeline(job_id: str, user_input: str, canton_environment: str = "sandbo
         "canton_url":         canton_url or settings.get_canton_url(),
     }
 
-    pipeline = build_pipeline()
-    final_state = pipeline.invoke(initial_state)
+    # Register callback so pipeline nodes can push real-time updates
+    if status_callback:
+        _status_callbacks[job_id] = status_callback
+        status_callback(job_id, "running", "Analyzing your contract description...", 10)
+
+    try:
+        pipeline = build_pipeline()
+        final_state = pipeline.invoke(initial_state)
+    finally:
+        # Always cleanup the callback
+        _status_callbacks.pop(job_id, None)
 
     if final_state.get("contract_id"):
         derived_status = "complete"

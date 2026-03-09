@@ -98,23 +98,24 @@ class DamlSandbox:
 
         sandbox_path = Path(self.sandbox_dir)
         daml_dir = sandbox_path / "daml"
+        dist_dir = sandbox_path / ".daml" / "dist"
 
         await asyncio.to_thread(sandbox_path.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(daml_dir.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(dist_dir.mkdir, parents=True, exist_ok=True)
 
         daml_yaml = (
-            f"sdk-version: 2.10.3\n"
+            "sdk-version: 2.7.1\n"
             f"name: {self.project_name}\n"
-            f"version: 0.0.1\n"
-            f"source: daml\n"
-            f"dependencies:\n"
-            f"  - daml-prim\n"
-            f"  - daml-stdlib\n"
-            f"  - daml-script\n"
+            "version: 0.0.1\n"
+            "source: daml\n"
+            "dependencies:\n"
+            "  - daml-prim\n"
+            "  - daml-stdlib\n"
         )
         await self.files.write("daml.yaml", daml_yaml)
 
-        main_daml = f"module {self.project_name} where\n"
+        main_daml = "module Main where\n"
         await self.files.write("daml/Main.daml", main_daml)
 
         self._initialized = True

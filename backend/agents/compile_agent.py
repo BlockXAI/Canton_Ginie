@@ -17,7 +17,6 @@ source: daml
 dependencies:
   - daml-prim
   - daml-stdlib
-  - daml-script
 """
 
 _SDK_INSTALL_INSTRUCTIONS = """
@@ -117,16 +116,30 @@ def run_compile_agent(daml_code: str, job_id: str) -> dict:
         }
 
 
+def _ensure_module_header(code: str) -> str:
+    """Guarantee the code starts with module Main where."""
+    has_module = re.search(r"^\s*module\s+\w+\s+where", code, re.MULTILINE)
+
+    if not has_module:
+        code = "module Main where\n\n" + code
+    else:
+        # Ensure module is named Main
+        code = re.sub(r"^(\s*)module\s+\w+\s+where", r"\1module Main where", code, count=1, flags=re.MULTILINE)
+
+    return code
+
+
 def _sanitize_daml(code: str) -> str:
+    code = _ensure_module_header(code)
     code = _fix_choice_ordering(code)
     code = _fix_this_dot_refs(code)
     code = _fix_bad_imports(code)
+    code = _strip_script_blocks(code)
     lines = code.split("\n")
     result = []
     ensure_seen_in_template = False
     in_where_block = False
     pending_ensure: str | None = None
-    prev_line_stripped = ""
 
     for i, line in enumerate(lines):
         stripped = line.lstrip()
@@ -156,22 +169,59 @@ def _sanitize_daml(code: str) -> str:
             result.append(pending_ensure)
             pending_ensure = None
 
-        script_assign = re.match(r'^([a-z][a-zA-Z0-9_]*)\s*=\s*script\s+do', stripped)
-        if script_assign:
-            fn_name = script_assign.group(1)
-            has_annotation = prev_line_stripped.startswith(f"{fn_name} :") or \
-                             prev_line_stripped.startswith(f"{fn_name}:")
-            if not has_annotation:
-                result.append(f"{fn_name} : Script ()")
-            indent = len(line) - len(line.lstrip())
-            line = " " * indent + re.sub(r'\s*=\s*script\s+do', " = do", stripped, count=1)
-
         line = re.sub(r'\b([A-Z][a-zA-Z0-9_]*)\.([a-z][a-zA-Z0-9_]*)\b', _strip_module_qualifier, line)
         result.append(line)
-        prev_line_stripped = stripped
 
     if pending_ensure is not None:
         result.append(pending_ensure)
+
+    return "\n".join(result)
+
+
+def _strip_script_blocks(code: str) -> str:
+    """Remove all Script test functions and their imports."""
+    # Remove Daml.Script import
+    code = re.sub(r'^\s*import\s+Daml\.Script\b.*$', '', code, flags=re.MULTILINE)
+    code = re.sub(r'^\s*import\s+DA\.Assert\b.*$', '', code, flags=re.MULTILINE)
+
+    # Remove script function blocks: type annotation + function def + indented body
+    # Pattern: funcName : Script (...)\nfuncName = script do\n  ...\n
+    lines = code.split("\n")
+    result = []
+    skip_until_top_level = False
+    skip_annotation = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Detect script type annotation: `name : Script (...)`
+        if re.match(r'^[a-z]\w*\s*:\s*Script\b', stripped):
+            skip_annotation = True
+            continue
+
+        # Detect script function: `name = script do`
+        if re.match(r'^[a-z]\w*\s*=\s*script\s+do', stripped):
+            skip_until_top_level = True
+            skip_annotation = False
+            continue
+
+        # If we were skipping an annotation but next line is not the function, emit nothing
+        if skip_annotation:
+            if re.match(r'^[a-z]\w*\s*=\s*script\s+do', stripped):
+                skip_until_top_level = True
+                skip_annotation = False
+                continue
+            else:
+                skip_annotation = False
+
+        # While skipping a script body, skip indented lines
+        if skip_until_top_level:
+            if stripped == '' or line.startswith(' ') or line.startswith('\t'):
+                continue
+            else:
+                skip_until_top_level = False
+
+        result.append(line)
 
     return "\n".join(result)
 
@@ -249,7 +299,8 @@ def _create_project_dir(daml_code: str, job_id: str, base_dir: str) -> str:
         f.write(sanitized)
 
     with open(os.path.join(project_dir, "daml.yaml"), "w") as f:
-        f.write(DAML_YAML_TEMPLATE.format(project_name=f"ginie-{job_id[:8]}"))
+        safe_name = "ginie-project"
+        f.write(DAML_YAML_TEMPLATE.format(project_name=safe_name))
 
     return project_dir
 

@@ -1,5 +1,6 @@
 import uuid
 import json
+import threading
 import structlog
 import redis
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -56,35 +57,59 @@ def _celery_has_workers() -> bool:
         return False
 
 
-def _run_pipeline_background(job_id: str, user_input: str, canton_environment: str, canton_url: str):
-    from pipeline.orchestrator import run_pipeline
+def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, canton_url: str):
+    """Run pipeline in a dedicated thread — guaranteed to execute immediately."""
+    logger.info("[THREAD] Starting pipeline", job_id=job_id)
+    print(f"[THREAD] Starting pipeline for job {job_id}")
 
     try:
-        initial = {
+        # Immediately mark as running
+        running_state = {
             "job_id":       job_id,
             "status":       "running",
-            "current_step": "Analyzing your contract description...",
+            "current_step": "Initializing pipeline...",
             "progress":     10,
             "updated_at":   datetime.utcnow().isoformat(),
         }
-        _in_memory_jobs[job_id] = initial
-        _set_job(job_id, initial)
+        _in_memory_jobs[job_id] = running_state
+        _set_job(job_id, running_state)
+        logger.info("[THREAD] Job status set to running", job_id=job_id)
+
+        def _status_callback(jid, status, step, progress):
+            update = {
+                "job_id":       jid,
+                "status":       status,
+                "current_step": step,
+                "progress":     progress,
+                "updated_at":   datetime.utcnow().isoformat(),
+            }
+            _in_memory_jobs[jid] = {**_in_memory_jobs.get(jid, {}), **update}
+            _set_job(jid, _in_memory_jobs[jid])
+            logger.info("[THREAD] Status update", job_id=jid, step=step, progress=progress)
+
+        from pipeline.orchestrator import run_pipeline
 
         final_state = run_pipeline(
             job_id=job_id,
             user_input=user_input,
             canton_environment=canton_environment,
             canton_url=canton_url,
+            status_callback=_status_callback,
         )
 
         if final_state.get("contract_id"):
             result = {
                 "job_id":            job_id,
                 "status":            "complete",
-                "current_step":      "Deployment complete!",
+                "current_step":      "Contract deployed successfully!",
                 "progress":          100,
+                "success":           True,
                 "contract_id":       final_state.get("contract_id"),
                 "package_id":        final_state.get("package_id"),
+                "template_id":       final_state.get("template_id", ""),
+                "template":          final_state.get("template", ""),
+                "parties":           final_state.get("parties", {}),
+                "fallback_used":     final_state.get("fallback_used", False),
                 "explorer_link":     final_state.get("explorer_link"),
                 "generated_code":    final_state.get("generated_code"),
                 "structured_intent": final_state.get("structured_intent"),
@@ -105,10 +130,14 @@ def _run_pipeline_background(job_id: str, user_input: str, canton_environment: s
 
         _in_memory_jobs[job_id] = result
         _set_job(job_id, result)
-        logger.info("Background job completed", job_id=job_id, status=result["status"])
+        logger.info("[THREAD] Pipeline completed", job_id=job_id, status=result["status"])
+        print(f"[THREAD] Pipeline completed for job {job_id} — status: {result['status']}")
 
     except Exception as e:
-        logger.error("Background job crashed", job_id=job_id, error=str(e))
+        logger.error("[THREAD] Pipeline crashed", job_id=job_id, error=str(e))
+        print(f"[THREAD] Pipeline CRASHED for job {job_id}: {e}")
+        import traceback
+        traceback.print_exc()
         error_data = {
             "job_id":        job_id,
             "status":        "failed",
@@ -119,6 +148,18 @@ def _run_pipeline_background(job_id: str, user_input: str, canton_environment: s
         }
         _in_memory_jobs[job_id] = error_data
         _set_job(job_id, error_data)
+
+
+def _start_pipeline_job(job_id: str, user_input: str, canton_environment: str, canton_url: str):
+    """Launch the pipeline in a daemon thread so it starts immediately."""
+    t = threading.Thread(
+        target=_run_pipeline_thread,
+        args=(job_id, user_input, canton_environment, canton_url),
+        daemon=True,
+        name=f"pipeline-{job_id[:8]}",
+    )
+    t.start()
+    logger.info("Pipeline thread launched", job_id=job_id, thread=t.name)
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -138,34 +179,14 @@ async def generate_contract(request: GenerateRequest, background_tasks: Backgrou
     _in_memory_jobs[job_id] = initial_data
     _set_job(job_id, initial_data)
 
-    if _celery_has_workers():
-        try:
-            from workers.celery_app import generate_contract_task
-            generate_contract_task.delay(
-                job_id=job_id,
-                user_input=request.prompt,
-                canton_environment=request.canton_environment or settings.canton_environment,
-                canton_url=canton_url,
-            )
-            logger.info("Job queued via Celery worker", job_id=job_id)
-        except Exception as exc:
-            logger.warning("Celery queue failed, falling back to background task", error=str(exc))
-            background_tasks.add_task(
-                _run_pipeline_background,
-                job_id=job_id,
-                user_input=request.prompt,
-                canton_environment=request.canton_environment or settings.canton_environment,
-                canton_url=canton_url,
-            )
-    else:
-        logger.info("No Celery workers active — running inline background task", job_id=job_id)
-        background_tasks.add_task(
-            _run_pipeline_background,
-            job_id=job_id,
-            user_input=request.prompt,
-            canton_environment=request.canton_environment or settings.canton_environment,
-            canton_url=canton_url,
-        )
+    # Launch pipeline in a dedicated thread (not BackgroundTasks which can silently fail)
+    _start_pipeline_job(
+        job_id=job_id,
+        user_input=request.prompt,
+        canton_environment=request.canton_environment or settings.canton_environment,
+        canton_url=canton_url,
+    )
+    logger.info("Job created and pipeline thread launched", job_id=job_id)
 
     return GenerateResponse(job_id=job_id)
 
@@ -200,8 +221,11 @@ async def get_job_result(job_id: str):
     return JobResultResponse(
         job_id=job_id,
         status=data.get("status"),
+        success=data.get("success"),
         contract_id=data.get("contract_id"),
         package_id=data.get("package_id"),
+        template=data.get("template"),
+        fallback_used=data.get("fallback_used"),
         explorer_link=data.get("explorer_link"),
         generated_code=data.get("generated_code"),
         structured_intent=data.get("structured_intent"),
@@ -246,8 +270,7 @@ Please update the contract to incorporate the requested changes while keeping th
     _in_memory_jobs[new_job_id] = initial_data
     _set_job(new_job_id, initial_data)
 
-    background_tasks.add_task(
-        _run_pipeline_background,
+    _start_pipeline_job(
         job_id=new_job_id,
         user_input=new_prompt,
         canton_environment=original_data.get("canton_environment", "sandbox"),

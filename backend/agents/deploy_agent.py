@@ -22,9 +22,11 @@ For DevNet/MainNet set CANTON_ENVIRONMENT and the matching URL in backend/.env.
 """.strip()
 
 
-def _auth_header(canton_environment: str) -> dict:
+def _auth_header(canton_environment: str, act_as: list[str] | None = None) -> dict:
     if canton_environment == "sandbox":
-        return {"Authorization": "Bearer sandbox-token"}
+        parties = act_as or ["issuer", "owner", "investor"]
+        token = make_sandbox_jwt(parties)
+        return {"Authorization": f"Bearer {token}"}
     token = os.environ.get("CANTON_TOKEN", "")
     if not token:
         raise EnvironmentError(
@@ -80,15 +82,28 @@ def _allocate_party(client: httpx.Client, canton_url: str, display_name: str, au
         headers={**auth, "Content-Type": "application/json"},
         timeout=15.0,
     )
+    logger.info("Party allocation response", status=resp.status_code, body=resp.text[:300])
     if resp.status_code in (200, 201):
         data = resp.json()
-        return (
+        identifier = (
             data.get("result", {}).get("identifier")
             or data.get("identifier")
-            or f"{display_name}::canton-{uuid.uuid4().hex[:8]}"
         )
-    logger.warning("Party allocation returned non-2xx", status=resp.status_code, body=resp.text[:200])
-    return f"{display_name}::canton-{uuid.uuid4().hex[:8]}"
+        if identifier:
+            return identifier
+    # If allocation fails (e.g. party already exists), try to fetch existing parties
+    list_resp = client.get(
+        f"{canton_url}/v1/parties",
+        headers=auth,
+        timeout=15.0,
+    )
+    if list_resp.status_code == 200:
+        list_data = list_resp.json()
+        for p in list_data.get("result", []):
+            if p.get("displayName") == display_name or p.get("identifier", "").startswith(display_name.lower() + "::"):
+                logger.info("Found existing party", name=display_name, id=p["identifier"])
+                return p["identifier"]
+    raise RuntimeError(f"Failed to allocate or find party '{display_name}': HTTP {resp.status_code} — {resp.text[:200]}")
 
 
 def _create_contract(
@@ -153,29 +168,77 @@ def run_deploy_agent(
 
         auth = _auth_header(canton_environment)
 
+        # Step 1: Extract package ID from DAR manifest
+        package_id = _extract_package_id_from_dar(dar_path)
+
         with httpx.Client() as client:
-            package_id = _upload_dar(client, canton_url, dar_bytes, auth)
+            # Step 2: Upload DAR
+            _upload_dar(client, canton_url, dar_bytes, auth)
             logger.info("DAR uploaded", package_id=package_id)
 
-            parties = structured_intent.get("parties", ["owner", "counterparty"])
-            templates = structured_intent.get("daml_templates_needed", ["Main"])
-            primary_template = templates[0] if templates else "Main"
+            # Step 3: Allocate parties
+            parties = structured_intent.get("parties", ["issuer", "investor"])
+            if len(parties) < 2:
+                parties = parties + ["counterparty"]
 
             allocated = {}
             for party_name in parties[:4]:
                 allocated[party_name] = _allocate_party(client, canton_url, party_name, auth)
                 logger.info("Party allocated", name=party_name, id=allocated[party_name])
 
-            payload = dict(allocated)
+            # Step 4: Read generated DAML code to parse template fields
+            daml_code = _read_daml_source(dar_path)
+            template_name = _extract_template_name(daml_code) if daml_code else None
+            if not template_name:
+                templates = structured_intent.get("daml_templates_needed", ["Main"])
+                template_name = templates[0] if templates else "Main"
 
+            # Step 5: Parse fields and build payload with proper defaults
+            fields = _parse_template_fields(daml_code) if daml_code else []
+            payload = _build_payload(fields, allocated)
+
+            # If no fields found, use party mapping directly
+            if not payload:
+                payload = dict(allocated)
+
+            # Build fully-qualified template ID
+            module_name = _extract_module_name(daml_code) if daml_code else "Main"
+            if package_id:
+                template_id = f"{package_id}:{module_name}:{template_name}"
+            else:
+                template_id = f"{module_name}:{template_name}"
+
+            logger.info("Creating contract", template_id=template_id, payload=payload)
+
+            # Collect ALL party IDs used in the payload (not just allocated map)
+            all_party_ids = set(allocated.values())
+            for v in payload.values():
+                if isinstance(v, str) and "::" in v:
+                    all_party_ids.add(v)
+
+            # Regenerate JWT with all party IDs for sandbox
+            if canton_environment == "sandbox":
+                from canton.canton_client_v2 import make_sandbox_jwt
+                token = make_sandbox_jwt(list(all_party_ids))
+                auth = {"Authorization": f"Bearer {token}"}
+                logger.info("JWT regenerated with parties", party_ids=list(all_party_ids))
+
+            # Step 6: Create contract
             contract_id = _create_contract(
                 client,
                 canton_url,
-                f"Main:{primary_template}",
+                template_id,
                 payload,
                 auth,
             )
             logger.info("Contract created", contract_id=contract_id)
+
+            # Step 7: Verify contract on ledger
+            verified = _verify_contract(client, canton_url, contract_id, template_id, auth)
+            if verified:
+                logger.info("Contract verified on ledger", contract_id=contract_id)
+            else:
+                logger.warning("Contract verification failed, but contract was created", contract_id=contract_id)
 
         if canton_environment == "sandbox":
             explorer_link = f"http://localhost:7575/contract/{contract_id}"
@@ -188,6 +251,7 @@ def run_deploy_agent(
             "success":       True,
             "contract_id":   contract_id,
             "package_id":    package_id,
+            "template_id":   template_id,
             "explorer_link": explorer_link,
             "environment":   canton_environment,
             "parties":       allocated,
@@ -211,6 +275,43 @@ def run_deploy_agent(
             "package_id":    "",
             "explorer_link": "",
         }
+
+
+def _read_daml_source(dar_path: str) -> str:
+    """Read the Main.daml source from the project directory next to the DAR."""
+    try:
+        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(dar_path)))
+        main_daml = os.path.join(project_dir, "daml", "Main.daml")
+        if os.path.exists(main_daml):
+            with open(main_daml, "r") as f:
+                return f.read()
+    except Exception:
+        pass
+    return ""
+
+
+def _verify_contract(client: httpx.Client, canton_url: str, contract_id: str, template_id: str, auth: dict) -> bool:
+    """Verify contract exists on the ledger via POST /v1/query."""
+    try:
+        body = {}
+        if template_id:
+            body["templateIds"] = [template_id]
+        resp = client.post(
+            f"{canton_url}/v1/query",
+            json=body,
+            headers={**auth, "Content-Type": "application/json"},
+            timeout=15.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("result", [])
+            for entry in results:
+                if entry.get("contractId") == contract_id:
+                    return True
+        return False
+    except Exception as e:
+        logger.warning("Verification query failed", error=str(e))
+        return False
 
 
 def _compute_package_id(dar_bytes: bytes) -> str:
@@ -271,6 +372,9 @@ def _parse_template_fields(daml_code: str) -> list[dict]:
 
 def _build_payload(fields: list[dict], party_values: dict) -> dict:
     payload = {}
+    party_ids = list(party_values.values())
+    party_idx = 0
+
     for field in fields:
         name = field["name"]
         ftype = field["type"].strip()
@@ -278,9 +382,14 @@ def _build_payload(fields: list[dict], party_values: dict) -> dict:
         if name in party_values:
             payload[name] = party_values[name]
         elif ftype == "Party":
-            payload[name] = list(party_values.values())[0] if party_values else name
+            # Assign allocated party IDs round-robin to all Party fields
+            if party_ids:
+                payload[name] = party_ids[party_idx % len(party_ids)]
+                party_idx += 1
+            else:
+                payload[name] = name
         elif ftype in ("Decimal", "Numeric") or ftype.startswith("Numeric "):
-            payload[name] = "1.0"
+            payload[name] = "100.0"
         elif ftype == "Int" or ftype == "Int64":
             payload[name] = 1
         elif ftype == "Text":

@@ -27,8 +27,11 @@ class JobStatusResponse(BaseModel):
 class JobResultResponse(BaseModel):
     job_id: str
     status: str
+    success: Optional[bool] = None
     contract_id: Optional[str] = None
     package_id: Optional[str] = None
+    template: Optional[str] = None
+    fallback_used: Optional[bool] = None
     explorer_link: Optional[str] = None
     generated_code: Optional[str] = None
     structured_intent: Optional[dict] = None

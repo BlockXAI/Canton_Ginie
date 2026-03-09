@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 import os
 
-_ENV_FILE = str(Path(__file__).parent / ".env")
+_ENV_FILE = str(Path(__file__).parent / ".env.ginie")
 
 
 class Settings(BaseSettings):
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     database_url: str = "postgresql://postgres:password@localhost:5432/ginie_daml"
 
-    canton_sandbox_url: str = "http://localhost:6865"
+    canton_sandbox_url: str = "http://localhost:7575"
     canton_devnet_url: str = "https://canton.network/ledger"
     canton_mainnet_url: str = "https://main.canton.network/ledger"
     canton_environment: str = "sandbox"
