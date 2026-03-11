@@ -2,7 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, CheckCircle2, XCircle, Code2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Code2,
+  Copy,
+  Check,
+  ArrowRight,
+  Package,
+  FileText,
+  Sparkles,
+} from "lucide-react";
 import Link from "next/link";
 
 interface JobStatus {
@@ -21,18 +33,50 @@ interface JobResult {
   generated_code?: string;
   error_message?: string;
   compile_errors?: string[];
+  fallback_used?: boolean;
+  template?: string;
 }
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      className="ml-2 shrink-0 rounded-md p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white/60"
+      title="Copy"
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-green-400" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
+    </button>
+  );
+}
+
+const pipelineSteps = [
+  { label: "Analyzing", minProgress: 0 },
+  { label: "Generating", minProgress: 20 },
+  { label: "Compiling", minProgress: 45 },
+  { label: "Deploying", minProgress: 75 },
+  { label: "Verifying", minProgress: 90 },
+];
 
 export default function SandboxPage() {
   const params = useParams();
   const router = useRouter();
   const jobId = params.jobId as string;
-  
+
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [showCode, setShowCode] = useState(false);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+  const API_URL =
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
   useEffect(() => {
     if (!jobId) return;
@@ -50,7 +94,10 @@ export default function SandboxPage() {
         const statusData: JobStatus = await response.json();
         setStatus(statusData);
 
-        if (statusData.status === "complete" || statusData.status === "failed") {
+        if (
+          statusData.status === "complete" ||
+          statusData.status === "failed"
+        ) {
           fetchResult();
         } else {
           setTimeout(pollStatus, 2000);
@@ -76,192 +123,285 @@ export default function SandboxPage() {
     pollStatus();
   }, [jobId, API_URL, router]);
 
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-800">
-      <div className="container mx-auto px-4 py-12">
-        <div className="max-w-4xl mx-auto">
-          {/* Header */}
-          <div className="mb-8">
-            <Link 
-              href="/"
-              className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Home
-            </Link>
-            <h1 className="text-4xl font-bold mt-4 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              Canton Sandbox
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-2">
-              Generating and deploying your DAML contract
-            </p>
-          </div>
+  const isProcessing =
+    status?.status === "queued" || status?.status === "running";
 
-          {/* Status Section */}
-          {status && (
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 mb-8">
-              <div className="flex items-center gap-3 mb-6">
-                {status.status === "queued" || status.status === "running" ? (
-                  <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-                ) : status.status === "complete" ? (
-                  <CheckCircle2 className="w-8 h-8 text-green-600" />
-                ) : (
-                  <XCircle className="w-8 h-8 text-red-600" />
-                )}
+  return (
+    <div className="min-h-screen bg-[#03040A]">
+      {/* Subtle grid background */}
+      <div
+        className="pointer-events-none fixed inset-0"
+        style={{
+          backgroundImage:
+            "radial-gradient(rgba(168,85,247,0.03) 1px, transparent 1px)",
+          backgroundSize: "32px 32px",
+        }}
+      />
+
+      <div className="relative mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
+        {/* Back nav */}
+        <Link
+          href="/"
+          className="group mb-8 inline-flex items-center gap-2 text-sm text-white/40 transition-colors hover:text-white/70"
+        >
+          <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+          Back to Home
+        </Link>
+
+        {/* Page header */}
+        <div className="mb-10">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-purple-500/20 bg-purple-500/10 px-3 py-1 text-xs font-medium text-purple-300">
+            <Sparkles className="h-3 w-3" />
+            Canton Sandbox
+          </div>
+          <h1 className="text-3xl font-bold text-white sm:text-4xl">
+            {status?.status === "complete"
+              ? "Contract Deployed"
+              : status?.status === "failed"
+                ? "Deployment Failed"
+                : "Deploying Contract"}
+          </h1>
+          <p className="mt-2 text-sm text-white/40">
+            Job {jobId.substring(0, 8)}...
+          </p>
+        </div>
+
+        {/* Pipeline Steps */}
+        {status && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between gap-1">
+              {pipelineSteps.map((step, i) => {
+                const active = (status.progress ?? 0) >= step.minProgress;
+                const nextStep = pipelineSteps[i + 1];
+                const current =
+                  active &&
+                  (i === pipelineSteps.length - 1 ||
+                    (status.progress ?? 0) < (nextStep?.minProgress ?? 100));
+                return (
+                  <div key={step.label} className="flex flex-1 flex-col items-center gap-1.5">
+                    <div
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-bold transition-all duration-500 ${
+                        status.status === "complete"
+                          ? "border-green-500/50 bg-green-500/20 text-green-400"
+                          : status.status === "failed" && active && !current
+                            ? "border-red-500/30 bg-red-500/10 text-red-400"
+                            : current && isProcessing
+                              ? "border-purple-400 bg-purple-500/20 text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.3)]"
+                              : active
+                                ? "border-purple-500/40 bg-purple-500/15 text-purple-400"
+                                : "border-white/8 bg-white/3 text-white/20"
+                      }`}
+                    >
+                      {status.status === "complete" ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : current && isProcessing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        i + 1
+                      )}
+                    </div>
+                    <span
+                      className={`text-[10px] font-medium transition-colors ${
+                        current && isProcessing
+                          ? "text-purple-300"
+                          : active
+                            ? "text-white/50"
+                            : "text-white/15"
+                      }`}
+                    >
+                      {step.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Progress bar */}
+            <div className="mt-6">
+              <div className="mb-2 flex justify-between text-xs">
+                <span className="text-white/40">{status.current_step}</span>
+                <span className="font-mono text-white/50">
+                  {status.progress}%
+                </span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${
+                    status.status === "complete"
+                      ? "bg-gradient-to-r from-green-500 to-emerald-400"
+                      : status.status === "failed"
+                        ? "bg-gradient-to-r from-red-600 to-red-400"
+                        : "bg-gradient-to-r from-purple-600 via-fuchsia-500 to-purple-600 bg-[length:200%_100%] animate-[shimmer_2s_linear_infinite]"
+                  }`}
+                  style={{ width: `${status.progress}%` }}
+                />
+              </div>
+            </div>
+
+            {status.error_message && (
+              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+                <p className="text-sm text-red-300">{status.error_message}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Success Result */}
+        {result && result.status === "complete" && (
+          <div className="space-y-6">
+            {/* Success banner */}
+            <div className="overflow-hidden rounded-2xl border border-green-500/20 bg-green-500/5 p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500/20">
+                  <CheckCircle2 className="h-5 w-5 text-green-400" />
+                </div>
                 <div>
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                    {status.status === "complete" 
-                      ? "Contract Deployed" 
-                      : status.status === "failed" 
-                      ? "Generation Failed" 
-                      : "Processing"}
-                  </h2>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Job ID: {jobId.substring(0, 8)}...
+                  <h3 className="text-lg font-semibold text-green-100">
+                    Successfully Deployed to Canton
+                  </h3>
+                  <p className="mt-1 text-sm text-green-300/60">
+                    Your contract is live on the Canton ledger
+                    {result.fallback_used && (
+                      <span className="ml-2 rounded-full bg-yellow-500/10 px-2 py-0.5 text-xs text-yellow-300">
+                        Fallback template used
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
-
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between text-sm mb-2">
-                    <span className="text-gray-600 dark:text-gray-400">{status.current_step}</span>
-                    <span className="font-medium text-gray-900 dark:text-white">{status.progress}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
-                    <div
-                      className="bg-gradient-to-r from-blue-600 to-purple-600 h-3 rounded-full transition-all duration-500 ease-out"
-                      style={{ width: `${status.progress}%` }}
-                    />
-                  </div>
-                </div>
-
-                {status.error_message && (
-                  <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                    <p className="text-red-800 dark:text-red-200 text-sm font-medium">{status.error_message}</p>
-                  </div>
-                )}
-              </div>
             </div>
-          )}
 
-          {/* Success Result */}
-          {result && result.status === "complete" && (
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 space-y-6">
-              <div className="p-6 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border border-green-200 dark:border-green-800 rounded-xl">
-                <div className="flex items-start gap-3 mb-4">
-                  <CheckCircle2 className="w-6 h-6 text-green-600 mt-1" />
-                  <div>
-                    <h3 className="font-semibold text-green-900 dark:text-green-100 text-lg">
-                      Successfully Deployed to Canton
-                    </h3>
-                    <p className="text-green-700 dark:text-green-300 text-sm mt-1">
-                      Your contract is now live on the Canton ledger
-                    </p>
+            {/* IDs */}
+            <div className="space-y-3">
+              {result.contract_id && (
+                <div className="rounded-xl border border-white/8 bg-white/3 p-4">
+                  <div className="mb-2 flex items-center gap-2">
+                    <FileText className="h-3.5 w-3.5 text-purple-400" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-white/40">
+                      Contract ID
+                    </span>
                   </div>
-                </div>
-                
-                <div className="space-y-3 mt-4">
-                  {result.contract_id && (
-                    <div className="bg-white dark:bg-gray-900 rounded-lg p-4">
-                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Contract ID</p>
-                      <p className="text-sm text-gray-900 dark:text-gray-100 font-mono break-all">
-                        {result.contract_id}
-                      </p>
-                    </div>
-                  )}
-                  {result.package_id && (
-                    <div className="bg-white dark:bg-gray-900 rounded-lg p-4">
-                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Package ID</p>
-                      <p className="text-sm text-gray-900 dark:text-gray-100 font-mono break-all">
-                        {result.package_id}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {result.generated_code && (
-                <div>
-                  <button
-                    onClick={() => setShowCode(!showCode)}
-                    className="flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white font-medium mb-3 transition-colors"
-                  >
-                    <Code2 className="w-5 h-5" />
-                    {showCode ? "Hide" : "View"} Generated DAML Code
-                  </button>
-                  
-                  {showCode && (
-                    <pre className="bg-gray-900 text-gray-100 p-6 rounded-xl overflow-x-auto text-sm border border-gray-700">
-                      <code>{result.generated_code}</code>
-                    </pre>
-                  )}
+                  <div className="flex items-start justify-between">
+                    <p className="break-all font-mono text-xs leading-relaxed text-white/70">
+                      {result.contract_id}
+                    </p>
+                    <CopyButton text={result.contract_id} />
+                  </div>
                 </div>
               )}
-
-              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                <Link
-                  href="/"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:from-blue-700 hover:to-purple-700 transition-all shadow-md hover:shadow-lg"
-                >
-                  Generate Another Contract
-                </Link>
-              </div>
-            </div>
-          )}
-
-          {/* Failure Result */}
-          {result && result.status === "failed" && (
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
-              <div className="p-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
-                <div className="flex items-start gap-3 mb-3">
-                  <XCircle className="w-6 h-6 text-red-600 mt-1" />
-                  <div>
-                    <h3 className="font-semibold text-red-900 dark:text-red-100 text-lg">
-                      Generation Failed
-                    </h3>
-                    {result.error_message && (
-                      <p className="text-red-700 dark:text-red-300 text-sm mt-2">
-                        {result.error_message}
-                      </p>
-                    )}
+              {result.package_id && (
+                <div className="rounded-xl border border-white/8 bg-white/3 p-4">
+                  <div className="mb-2 flex items-center gap-2">
+                    <Package className="h-3.5 w-3.5 text-fuchsia-400" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-white/40">
+                      Package ID
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between">
+                    <p className="break-all font-mono text-xs leading-relaxed text-white/70">
+                      {result.package_id}
+                    </p>
+                    <CopyButton text={result.package_id} />
                   </div>
                 </div>
-                
-                {result.compile_errors && result.compile_errors.length > 0 && (
-                  <div className="mt-4 bg-white dark:bg-gray-900 rounded-lg p-4">
-                    <p className="text-sm font-medium text-red-800 dark:text-red-200 mb-2">
-                      Compilation Errors:
-                    </p>
-                    <div className="space-y-1">
-                      {result.compile_errors.map((error, i) => (
-                        <p key={i} className="text-xs text-red-700 dark:text-red-300 font-mono">
-                          {error}
-                        </p>
-                      ))}
+              )}
+            </div>
+
+            {/* Generated Code */}
+            {result.generated_code && (
+              <div>
+                <button
+                  onClick={() => setShowCode(!showCode)}
+                  className="mb-3 flex items-center gap-2 text-sm font-medium text-white/50 transition-colors hover:text-white/80"
+                >
+                  <Code2 className="h-4 w-4" />
+                  {showCode ? "Hide" : "View"} Generated DAML Code
+                </button>
+
+                {showCode && (
+                  <div className="relative">
+                    <pre className="scrollbar-hide overflow-x-auto rounded-xl border border-white/8 bg-[#0a0b14] p-5 text-sm leading-relaxed text-purple-200/80">
+                      <code>{result.generated_code}</code>
+                    </pre>
+                    <div className="absolute right-3 top-3">
+                      <CopyButton text={result.generated_code} />
                     </div>
                   </div>
                 )}
               </div>
+            )}
 
-              <div className="pt-6">
-                <Link
-                  href="/"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:from-blue-700 hover:to-purple-700 transition-all shadow-md hover:shadow-lg"
-                >
-                  Try Again
-                </Link>
+            {/* Actions */}
+            <div className="flex items-center gap-3 border-t border-white/8 pt-6">
+              <Link
+                href="/"
+                className="group inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-fuchsia-600 px-6 py-3 text-sm font-semibold text-white transition-all hover:from-purple-500 hover:to-fuchsia-500 hover:shadow-[0_0_24px_rgba(168,85,247,0.3)]"
+              >
+                Generate Another
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Failure Result */}
+        {result && result.status === "failed" && (
+          <div className="space-y-6">
+            <div className="overflow-hidden rounded-2xl border border-red-500/20 bg-red-500/5 p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/20">
+                  <XCircle className="h-5 w-5 text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-red-100">
+                    Generation Failed
+                  </h3>
+                  {result.error_message && (
+                    <p className="mt-2 text-sm text-red-300/70">
+                      {result.error_message}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
 
-          {!status && (
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-12 text-center">
-              <Loader2 className="w-12 h-12 text-blue-600 animate-spin mx-auto mb-4" />
-              <p className="text-gray-600 dark:text-gray-400">Loading job status...</p>
+              {result.compile_errors && result.compile_errors.length > 0 && (
+                <div className="mt-4 rounded-xl border border-red-500/10 bg-[#0a0b14] p-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-red-400/60">
+                    Compilation Errors
+                  </p>
+                  <div className="space-y-1">
+                    {result.compile_errors.map((error, i) => (
+                      <p
+                        key={i}
+                        className="font-mono text-xs text-red-300/60"
+                      >
+                        {typeof error === "string"
+                          ? error
+                          : JSON.stringify(error)}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+
+            <Link
+              href="/"
+              className="group inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-fuchsia-600 px-6 py-3 text-sm font-semibold text-white transition-all hover:from-purple-500 hover:to-fuchsia-500 hover:shadow-[0_0_24px_rgba(168,85,247,0.3)]"
+            >
+              Try Again
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </Link>
+          </div>
+        )}
+
+        {/* Loading state */}
+        {!status && (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-white/8 bg-white/3 py-16">
+            <Loader2 className="mb-4 h-10 w-10 animate-spin text-purple-400" />
+            <p className="text-sm text-white/40">Loading job status...</p>
+          </div>
+        )}
       </div>
     </div>
   );

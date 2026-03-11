@@ -17,7 +17,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 export const metadata: Metadata = createMetadata({
-  title: "React Bits Pro - AI SaaS Template",
+  title: "Ginie DAML - AI-Powered Canton Smart Contracts",
   description: `Welcome to ${siteConfig.name}. ${siteConfig.description}`,
   path: "/",
 });
@@ -34,7 +34,7 @@ export default function HomePage(): ReactNode {
         <section className="relative py-32 md:py-48">
           <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
             <TextReveal
-              text="If you can dream it, you can prompt it into existence."
+              text="Describe it in English. Deploy it on Canton. In minutes."
               className="text-4xl font-medium tracking-tight text-foreground sm:text-5xl md:text-6xl lg:text-7xl"
             />
           </div>

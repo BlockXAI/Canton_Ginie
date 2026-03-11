@@ -88,7 +88,7 @@ export function TrustedBy(): ReactNode {
       <div className="px-4 sm:px-6 lg:px-[max(2rem,calc((100vw-85rem)/2+2rem))]">
         <div className="mb-10 flex items-center justify-between">
           <h2 className="text-2xl font-medium tracking-tight text-foreground md:text-3xl lg:text-4xl">
-            Trusted by teams who ship faster with Kraft
+            Trusted by teams who deploy smarter with Ginie
           </h2>
           <Link
             href="#"

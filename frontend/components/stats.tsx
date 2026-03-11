@@ -6,7 +6,7 @@ import { motion, useInView } from "motion/react";
 interface Competitor {
   name: string;
   value: number;
-  isKraft?: boolean;
+  isGinie?: boolean;
 }
 
 interface Benchmark {
@@ -18,32 +18,32 @@ interface Benchmark {
 const benchmarks: Benchmark[] = [
   {
     category: "Speed",
-    metric: "Designs/min",
+    metric: "Contracts/min",
     competitors: [
-      { name: "Kraft", value: 94.2, isKraft: true },
-      { name: "Figma AI", value: 71.8 },
-      { name: "Canva Magic", value: 68.4 },
-      { name: "Framer AI", value: 58.7 },
+      { name: "Ginie", value: 94.2, isGinie: true },
+      { name: "Manual DAML", value: 42.1 },
+      { name: "Solidity GPT", value: 68.4 },
+      { name: "ChainGPT", value: 58.7 },
     ],
   },
   {
-    category: "Quality",
-    metric: "Score",
+    category: "Accuracy",
+    metric: "Compilation Success %",
     competitors: [
-      { name: "Kraft", value: 96.8, isKraft: true },
-      { name: "Figma AI", value: 89.2 },
-      { name: "Canva Magic", value: 82.1 },
-      { name: "Framer AI", value: 79.4 },
+      { name: "Ginie", value: 96.8, isGinie: true },
+      { name: "Manual DAML", value: 89.2 },
+      { name: "Solidity GPT", value: 72.1 },
+      { name: "ChainGPT", value: 65.4 },
     ],
   },
   {
-    category: "Consistency",
-    metric: "Accuracy %",
+    category: "Deployment",
+    metric: "Success Rate %",
     competitors: [
-      { name: "Kraft", value: 98.1, isKraft: true },
-      { name: "Figma AI", value: 81.3 },
-      { name: "Framer AI", value: 76.9 },
-      { name: "Canva Magic", value: 72.4 },
+      { name: "Ginie", value: 98.1, isGinie: true },
+      { name: "Manual DAML", value: 81.3 },
+      { name: "Solidity GPT", value: 56.9 },
+      { name: "ChainGPT", value: 48.4 },
     ],
   },
 ];
@@ -72,7 +72,7 @@ function BarChart({ benchmark }: { benchmark: Benchmark }) {
               <div className="w-28 shrink-0">
                 <span
                   className={`text-sm ${
-                    competitor.isKraft
+                    competitor.isGinie
                       ? "font-medium text-foreground"
                       : "text-muted-foreground"
                   }`}
@@ -85,8 +85,8 @@ function BarChart({ benchmark }: { benchmark: Benchmark }) {
                 <div className="relative h-6 flex-1 overflow-hidden rounded-sm bg-muted/30">
                   <motion.div
                     className={`absolute inset-y-0 left-0 rounded-sm ${
-                      competitor.isKraft
-                        ? "bg-linear-to-r from-[#333DA7] to-[#7388DF]"
+                      competitor.isGinie
+                        ? "bg-linear-to-r from-purple-600 to-fuchsia-500"
                         : "bg-muted/75"
                     }`}
                     initial={{ width: 0 }}
@@ -102,7 +102,7 @@ function BarChart({ benchmark }: { benchmark: Benchmark }) {
                 <div className="w-12 shrink-0 pl-2 text-right">
                   <motion.span
                     className={`text-sm tabular-nums ${
-                      competitor.isKraft
+                      competitor.isGinie
                         ? "font-medium text-foreground"
                         : "text-muted-foreground"
                     }`}
@@ -131,8 +131,8 @@ export function Stats(): ReactNode {
             Performance that stands out
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            We benchmark Kraft against leading design tools across speed,
-            quality, and consistency. The results speak for themselves.
+            We benchmark Ginie against manual coding and other AI contract
+            generators. The results speak for themselves.
           </p>
         </div>
 

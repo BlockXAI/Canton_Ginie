@@ -2,31 +2,30 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
-import Image from "next/image";
-import { Facebook, Twitter, Linkedin } from "lucide-react";
+import { Github, Twitter, Linkedin } from "lucide-react";
 
 const footerLinks = {
   Product: [
-    { label: "Features", href: "#" },
-    { label: "Pricing", href: "#" },
-    { label: "Changelog", href: "#" },
-    { label: "Roadmap", href: "#" },
+    { label: "Features", href: "#features" },
+    { label: "Pricing", href: "#pricing" },
+    { label: "How It Works", href: "#how-it-works" },
+    { label: "FAQ", href: "#faq" },
   ],
-  Company: [
-    { label: "About", href: "#" },
-    { label: "Blog", href: "#" },
-    { label: "Careers", href: "#" },
-    { label: "Press", href: "#" },
+  Developers: [
+    { label: "Documentation", href: "#" },
+    { label: "API Reference", href: "#" },
+    { label: "Canton Network", href: "https://canton.network" },
+    { label: "DAML Docs", href: "https://docs.daml.com" },
   ],
   Resources: [
-    { label: "Documentation", href: "#" },
-    { label: "Help Center", href: "#" },
+    { label: "GitHub", href: "https://github.com/Satyam-10124/Ginie_Daml" },
     { label: "Community", href: "#" },
+    { label: "Blog", href: "#" },
   ],
 };
 
 const socialLinks = [
-  { icon: Facebook, href: "#", label: "Facebook" },
+  { icon: Github, href: "https://github.com/Satyam-10124/Ginie_Daml", label: "GitHub" },
   { icon: Twitter, href: "#", label: "Twitter" },
   { icon: Linkedin, href: "#", label: "LinkedIn" },
 ];
@@ -89,7 +88,7 @@ export function Footer(): ReactNode {
       <div className="relative mx-auto max-w-7xl py-8">
         <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} Kraft, Inc. All rights reserved.
+            © {new Date().getFullYear()} Ginie DAML. All rights reserved.
           </p>
           <div className="flex gap-6">
             <Link
@@ -114,15 +113,13 @@ export function Footer(): ReactNode {
         </div>
       </div>
 
-      <div className="relative mx-auto max-w-338 select-none h-44 pb-12">
-        <Image
-          src="/svg/logo-text.svg"
-          alt=""
-          width={2500}
-          height={400}
-          className="w-full opacity-5 invert dark:invert-0"
+      <div className="relative mx-auto max-w-338 select-none h-44 pb-12 flex items-center justify-center">
+        <span
+          className="text-[12rem] font-bold tracking-tighter text-foreground/5 select-none"
           aria-hidden="true"
-        />
+        >
+          GINIE
+        </span>
       </div>
     </footer>
   );

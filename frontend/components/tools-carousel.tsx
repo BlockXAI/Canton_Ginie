@@ -14,25 +14,25 @@ const tools: Tool[] = [
   {
     title: "Describe",
     description:
-      "Tell Kraft what you need. A logo, a landing page, an entire brand—just say it.",
+      "Tell Ginie what contract you need. A bond, a token swap, an escrow—just describe it in plain English.",
     image: "/img/describe.webp",
   },
   {
     title: "Generate",
     description:
-      "Watch as Kraft creates multiple design options, each one production-ready.",
+      "Watch as Ginie generates production-ready DAML code with proper types, templates, and choices.",
     image: "/img/generate.webp",
   },
   {
-    title: "Refine",
+    title: "Compile",
     description:
-      "Tweak colors, fonts, adjust layouts—Kraft understands natural language edits.",
+      "Ginie auto-compiles your contract, fixes errors, and retries—up to 3 attempts with smart fallback.",
     image: "/img/refine.webp",
   },
   {
-    title: "Ship",
+    title: "Deploy",
     description:
-      "Export to Figma, download assets, or push directly to your codebase. Done.",
+      "Deploy directly to Canton sandbox, devnet, or mainnet. Get your contract ID instantly.",
     image: "/img/ship.webp",
   },
 ];
@@ -100,7 +100,7 @@ export function ToolsCarousel(): ReactNode {
       <div className="px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
           <h2 className="mb-12 text-2xl font-medium tracking-tight text-foreground md:text-3xl lg:text-4xl">
-            From idea to finished design in four simple steps
+            From idea to deployed contract in four simple steps
           </h2>
         </div>
       </div>

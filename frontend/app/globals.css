@@ -143,3 +143,8 @@ textarea:focus-visible {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
