@@ -11,29 +11,29 @@ interface FAQItem {
 
 const faqs: FAQItem[] = [
   {
-    question: "What kinds of designs can Kraft create?",
+    question: "What kinds of contracts can Ginie create?",
     answer:
-      "Kraft can generate logos, landing pages, social media graphics, brand identities, app interfaces, presentations, and more. Just describe what you need in natural language, and Kraft will produce multiple production-ready options.",
+      "Ginie can generate bonds, token swaps, escrow agreements, multi-party workflows, asset transfers, and more. Just describe what you need in plain English, and Ginie will produce production-ready DAML code.",
   },
   {
-    question: "How does Kraft ensure brand consistency?",
+    question: "How does Ginie ensure contract correctness?",
     answer:
-      "Kraft learns your brand guidelines—colors, fonts, tone, and style—and applies them automatically to every design. Upload your brand kit once, and Kraft maintains consistency across all outputs.",
+      "Ginie uses an AI pipeline that generates, compiles, and auto-fixes DAML code. If compilation fails, it retries up to 3 times with smart error analysis. As a final safety net, a guaranteed fallback template is deployed.",
   },
   {
-    question: "Can I edit or refine designs after generation?",
+    question: "Can I customize the generated contracts?",
     answer:
-      "Absolutely. You can tweak colors, adjust layouts, change fonts, or request specific modifications using natural language. Kraft understands conversational edits like 'make it more minimal' or 'use a warmer palette.'",
+      "Absolutely. The generated DAML source code is fully visible and editable. You can modify templates, add choices, adjust party roles, or extend the contract logic before or after deployment.",
   },
   {
-    question: "What export formats does Kraft support?",
+    question: "What Canton environments are supported?",
     answer:
-      "Kraft exports to all major formats including PNG, SVG, PDF, and Figma. You can also push designs directly to your codebase with production-ready React or HTML/CSS components.",
+      "Ginie supports Canton Sandbox for local development, Canton Devnet for testing, and Canton Mainnet for production deployments. Switch environments seamlessly from the same interface.",
   },
   {
-    question: "Is my data and designs secure?",
+    question: "Is my contract code and data secure?",
     answer:
-      "Yes. All designs and data are encrypted end-to-end. We never train our models on your proprietary work, and you retain full ownership of everything you create with Kraft.",
+      "Yes. All generated code and deployment data are encrypted. We never train our models on your proprietary contracts, and you retain full ownership of everything you create with Ginie.",
   },
 ];
 

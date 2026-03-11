@@ -20,45 +20,45 @@ interface Testimonial {
 
 const testimonials: Testimonial[] = [
   {
-    badge: "Design Agency",
-    company: "Stellar Creative",
+    badge: "DeFi Protocol",
+    company: "ChainVault Labs",
     quote:
-      "We've completely transformed our workflow with Kraft. What used to take our team days now happens in hours. The AI understands our brand guidelines perfectly and produces designs that clients love on the first revision.",
+      "Ginie completely transformed how we build DAML contracts. What used to take our team weeks of manual coding now happens in minutes. The AI understands Canton's type system perfectly and produces contracts that compile on the first try.",
     name: "Sarah Chen",
-    role: "Creative Director",
+    role: "Head of Engineering",
     image: "https://images.unsplash.com/photo-1574108233269-86d1199d28de?q=80&w=774&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
     stats: [
-      { label: "Design Output", value: "10x faster" },
-      { label: "Client Revisions", value: "-80%" },
-      { label: "Team Size", value: "12 designers" },
+      { label: "Contract Deployment", value: "10x faster" },
+      { label: "Compilation Errors", value: "-90%" },
+      { label: "Team Size", value: "8 engineers" },
     ],
   },
   {
-    badge: "Tech Startup",
-    company: "Quantum Labs",
+    badge: "FinTech Startup",
+    company: "Quantum Ledger",
     quote:
-      "As a startup without a dedicated design team, Kraft has been a game-changer. We ship beautiful marketing materials, pitch decks, and product interfaces without hiring a single designer. The ROI is incredible.",
+      "As a startup without dedicated DAML developers, Ginie has been a game-changer. We deploy smart contracts for bonds, escrows, and token swaps without writing a single line of DAML manually. The ROI is incredible.",
     name: "Marcus Rodriguez",
-    role: "Co-founder & CEO",
+    role: "Co-founder & CTO",
     image: "https://images.unsplash.com/photo-1530268729831-4b0b9e170218?q=80&w=1740&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
     stats: [
-      { label: "Design Cost Savings", value: "$150k/year" },
-      { label: "Time to Launch", value: "2 weeks" },
-      { label: "Assets Created", value: "500+" },
+      { label: "Dev Cost Savings", value: "$200k/year" },
+      { label: "Time to Deploy", value: "Minutes" },
+      { label: "Contracts Deployed", value: "350+" },
     ],
   },
   {
     badge: "Enterprise",
-    company: "GlobalTech Inc",
+    company: "GlobalTrade Inc",
     quote:
-      "Rolling out Kraft across our marketing team was seamless. The brand consistency features ensure every piece of content—from social posts to annual reports—looks like it came from the same designer. It's remarkable.",
+      "Rolling out Ginie across our blockchain team was seamless. The automated compilation and deployment pipeline ensures every contract—from simple agreements to complex multi-party workflows—deploys flawlessly to Canton.",
     name: "Roy Park",
-    role: "VP of Marketing",
+    role: "VP of Engineering",
     image: "https://images.unsplash.com/photo-1540569014015-19a7be504e3a?q=80&w=870&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
     stats: [
-      { label: "Brand Consistency", value: "99.5%" },
-      { label: "Team Members", value: "200+" },
-      { label: "Monthly Designs", value: "5,000+" },
+      { label: "Deploy Success Rate", value: "99.5%" },
+      { label: "Team Members", value: "50+" },
+      { label: "Monthly Contracts", value: "2,000+" },
     ],
   },
 ];
@@ -123,7 +123,7 @@ function TestimonialCard({ testimonial, isActive }: { testimonial: Testimonial; 
 
         <div className="mt-6 border-t border-foreground/10 pt-8">
           <p className="text-xs font-medium uppercase text-muted-foreground">
-            How they use Kraft
+            How they use Ginie
           </p>
           <div className="mt-4 space-y-2">
             {testimonial.stats.map((stat) => (
@@ -194,7 +194,7 @@ export function Testimonials(): ReactNode {
       <div className="px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl mb-12">
           <p className="text-4xl font-medium tracking-tight text-foreground">
-            Trusted by design teams worldwide
+            Trusted by blockchain teams worldwide
           </p>
         </div>
       </div>

@@ -6,20 +6,19 @@ import {
   useScroll,
   useMotionValueEvent,
 } from "motion/react";
-import Image from "next/image";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 const navLinks = [
   { href: "#features", label: "Features" },
-  { href: "#templates", label: "Templates" },
+  { href: "#how-it-works", label: "How It Works" },
   { href: "#pricing", label: "Pricing" },
-  { href: "#resources", label: "Resources" },
+  { href: "#faq", label: "FAQ" },
 ];
 
 const authLinks = [
-  { href: "", label: "Contact" },
-  { href: "", label: "Join" },
+  { href: "https://github.com/Satyam-10124/Ginie_Daml", label: "GitHub" },
+  { href: "#", label: "Docs" },
 ];
 
 export function Header(): ReactNode {
@@ -77,16 +76,12 @@ export function Header(): ReactNode {
           >
             <Link
               href="/"
-              className="focus-ring flex items-center"
-              aria-label="Kraft home"
+              className="focus-ring flex items-center gap-2"
+              aria-label="Ginie DAML home"
             >
-              <Image
-                src="/svg/logo.svg"
-                alt="Kraft"
-                width={120}
-                height={34}
-                priority
-              />
+              <span className="text-2xl font-bold tracking-tight text-white">
+                Ginie<span className="text-purple-400">.</span>
+              </span>
             </Link>
           </motion.div>
 

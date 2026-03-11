@@ -13,7 +13,7 @@ export function BottomCTA(): ReactNode {
               Get early access
             </h2>
             <p className="mt-3 text-lg max-w-md text-muted-foreground">
-              Every week, we ship new AI-powered design features. Join and be first in line to shape what we build next.
+              Every week, we ship new AI-powered contract generation features. Join and be first in line to shape what we build next.
             </p>
 
             <form className="mt-8 flex flex-col gap-2 sm:flex-row">
