@@ -16,6 +16,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
+
+const MetallicPaint = dynamic(() => import("@/components/metallic-paint"), {
+  ssr: false,
+});
 
 interface JobStatus {
   job_id: string;
@@ -406,6 +411,35 @@ export default function SandboxPage() {
             <p className="text-sm text-white/40">Loading job status...</p>
           </div>
         )}
+
+        {/* Metallic Paint Effect */}
+        <div className="mt-16 flex justify-center">
+          <div style={{ width: '400px', height: '400px' }}>
+            <MetallicPaint
+              imageSrc="/g-logo.svg"
+              seed={42}
+              scale={4}
+              patternSharpness={1}
+              noiseScale={0.5}
+              speed={0.59}
+              liquid={0.88}
+              mouseAnimation={false}
+              brightness={2}
+              contrast={0.5}
+              refraction={0.012}
+              blur={0.015}
+              chromaticSpread={2}
+              fresnel={1}
+              angle={0}
+              waveAmplitude={1}
+              distortion={1}
+              contour={0.2}
+              lightColor="#ffffff"
+              darkColor="#000000"
+              tintColor="#feb3ff"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
