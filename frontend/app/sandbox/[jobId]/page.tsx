@@ -14,6 +14,11 @@ import {
   Package,
   FileText,
   Sparkles,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -30,6 +35,16 @@ interface JobStatus {
   error_message?: string;
 }
 
+interface AuditFinding {
+  id?: string;
+  severity: string;
+  category?: string;
+  title: string;
+  description?: string;
+  recommendation?: string;
+  references?: string[];
+}
+
 interface JobResult {
   job_id: string;
   status: string;
@@ -40,6 +55,15 @@ interface JobResult {
   compile_errors?: string[];
   fallback_used?: boolean;
   template?: string;
+  security_score?: number | null;
+  compliance_score?: number | null;
+  enterprise_score?: number | null;
+  deploy_gate?: boolean | null;
+  audit_reports?: {
+    json?: string;
+    markdown?: string;
+    html?: string;
+  };
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -67,9 +91,50 @@ const pipelineSteps = [
   { label: "Analyzing", minProgress: 0 },
   { label: "Generating", minProgress: 20 },
   { label: "Compiling", minProgress: 45 },
-  { label: "Deploying", minProgress: 75 },
-  { label: "Verifying", minProgress: 90 },
+  { label: "Auditing", minProgress: 75 },
+  { label: "Deploying", minProgress: 85 },
 ];
+
+function ScoreRing({ score, label, size = 80 }: { score: number; label: string; size?: number }) {
+  const radius = (size - 8) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (score / 100) * circumference;
+  const color = score >= 85 ? "#22c55e" : score >= 70 ? "#eab308" : score >= 50 ? "#f97316" : "#ef4444";
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={4} />
+        <circle
+          cx={size / 2} cy={size / 2} r={radius} fill="none"
+          stroke={color} strokeWidth={4} strokeLinecap="round"
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          className="transition-all duration-1000 ease-out"
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center justify-center" style={{ width: size, height: size }}>
+        <span className="text-lg font-bold text-white">{score}</span>
+      </div>
+      <span className="text-[10px] font-medium uppercase tracking-wider text-white/40">{label}</span>
+    </div>
+  );
+}
+
+function SeverityBadge({ severity }: { severity: string }) {
+  const colors: Record<string, string> = {
+    CRITICAL: "bg-red-500/20 text-red-400 border-red-500/30",
+    HIGH: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+    MEDIUM: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    LOW: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    INFO: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+    OPT: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  };
+  return (
+    <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${colors[severity] || colors.INFO}`}>
+      {severity}
+    </span>
+  );
+}
 
 export default function SandboxPage() {
   const params = useParams();
@@ -79,6 +144,8 @@ export default function SandboxPage() {
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [showCode, setShowCode] = useState(false);
+  const [showFindings, setShowFindings] = useState(false);
+  const [auditFindings, setAuditFindings] = useState<AuditFinding[]>([]);
 
   const API_URL =
     process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -124,6 +191,15 @@ export default function SandboxPage() {
 
         const resultData: JobResult = await response.json();
         setResult(resultData);
+
+        // Parse audit findings from report JSON
+        if (resultData.audit_reports?.json) {
+          try {
+            const parsed = JSON.parse(resultData.audit_reports.json);
+            const findings = parsed?.securityAudit?.report?.findings || [];
+            setAuditFindings(findings);
+          } catch { /* ignore parse errors */ }
+        }
       } catch (error) {
         console.error("Error fetching result:", error);
       }
@@ -279,6 +355,119 @@ export default function SandboxPage() {
                 </div>
               </div>
             </div>
+
+            {/* Security & Compliance Dashboard */}
+            {(result.security_score != null || result.compliance_score != null) && (
+              <div className="rounded-2xl border border-white/8 bg-white/3 p-6">
+                <div className="mb-4 flex items-center gap-2">
+                  {result.deploy_gate !== false ? (
+                    <ShieldCheck className="h-5 w-5 text-green-400" />
+                  ) : (
+                    <ShieldAlert className="h-5 w-5 text-yellow-400" />
+                  )}
+                  <h3 className="text-sm font-semibold text-white">
+                    Enterprise Security &amp; Compliance
+                  </h3>
+                  {result.deploy_gate !== false ? (
+                    <span className="ml-auto rounded-full bg-green-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-green-400 border border-green-500/20">
+                      DEPLOY READY
+                    </span>
+                  ) : (
+                    <span className="ml-auto rounded-full bg-yellow-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-yellow-400 border border-yellow-500/20">
+                      REVIEW RECOMMENDED
+                    </span>
+                  )}
+                </div>
+
+                {/* Score cards */}
+                <div className="grid grid-cols-3 gap-4">
+                  {result.security_score != null && (
+                    <div className="relative flex flex-col items-center rounded-xl border border-white/6 bg-white/3 p-4">
+                      <ScoreRing score={result.security_score} label="Security" />
+                    </div>
+                  )}
+                  {result.compliance_score != null && (
+                    <div className="relative flex flex-col items-center rounded-xl border border-white/6 bg-white/3 p-4">
+                      <ScoreRing score={result.compliance_score} label="Compliance" />
+                    </div>
+                  )}
+                  {result.enterprise_score != null && (
+                    <div className="relative flex flex-col items-center rounded-xl border border-white/6 bg-white/3 p-4">
+                      <ScoreRing score={Math.round(result.enterprise_score)} label="Enterprise" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Findings toggle */}
+                {auditFindings.length > 0 && (
+                  <div className="mt-4">
+                    <button
+                      onClick={() => setShowFindings(!showFindings)}
+                      className="flex w-full items-center justify-between rounded-lg border border-white/6 bg-white/3 px-4 py-2.5 text-xs font-medium text-white/60 transition-colors hover:bg-white/5 hover:text-white/80"
+                    >
+                      <span className="flex items-center gap-2">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {auditFindings.length} Security Finding{auditFindings.length !== 1 ? "s" : ""}
+                        <span className="flex gap-1 ml-1">
+                          {auditFindings.filter(f => f.severity === "CRITICAL").length > 0 && (
+                            <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] font-bold text-red-400">
+                              {auditFindings.filter(f => f.severity === "CRITICAL").length} CRIT
+                            </span>
+                          )}
+                          {auditFindings.filter(f => f.severity === "HIGH").length > 0 && (
+                            <span className="rounded bg-orange-500/20 px-1.5 py-0.5 text-[9px] font-bold text-orange-400">
+                              {auditFindings.filter(f => f.severity === "HIGH").length} HIGH
+                            </span>
+                          )}
+                          {auditFindings.filter(f => f.severity === "MEDIUM").length > 0 && (
+                            <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[9px] font-bold text-yellow-400">
+                              {auditFindings.filter(f => f.severity === "MEDIUM").length} MED
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                      {showFindings ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </button>
+
+                    {showFindings && (
+                      <div className="mt-2 max-h-80 space-y-2 overflow-y-auto pr-1">
+                        {auditFindings.map((finding, i) => (
+                          <div
+                            key={finding.id || i}
+                            className="rounded-lg border border-white/6 bg-[#0a0b14] p-3"
+                          >
+                            <div className="mb-1 flex items-center gap-2">
+                              <SeverityBadge severity={finding.severity} />
+                              <span className="text-xs font-medium text-white/80">{finding.title}</span>
+                            </div>
+                            {finding.description && (
+                              <p className="mb-1 text-[11px] leading-relaxed text-white/40">
+                                {finding.description}
+                              </p>
+                            )}
+                            {finding.recommendation && (
+                              <p className="text-[11px] text-purple-300/60">
+                                <span className="font-semibold text-purple-300/80">Fix: </span>
+                                {finding.recommendation}
+                              </p>
+                            )}
+                            {finding.references && finding.references.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {finding.references.map((ref, j) => (
+                                  <span key={j} className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] font-mono text-white/30">
+                                    {ref}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* IDs */}
             <div className="space-y-3">

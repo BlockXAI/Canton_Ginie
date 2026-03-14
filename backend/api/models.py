@@ -39,6 +39,11 @@ class JobResultResponse(BaseModel):
     error_message: Optional[str] = None
     compile_errors: Optional[list] = None
     created_at: Optional[str] = None
+    security_score: Optional[int] = None
+    compliance_score: Optional[int] = None
+    enterprise_score: Optional[float] = None
+    deploy_gate: Optional[bool] = None
+    audit_reports: Optional[dict] = None
 
 
 class IterateRequest(BaseModel):

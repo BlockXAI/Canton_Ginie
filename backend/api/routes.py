@@ -114,6 +114,11 @@ def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, 
                 "generated_code":    final_state.get("generated_code"),
                 "structured_intent": final_state.get("structured_intent"),
                 "attempt_number":    final_state.get("attempt_number"),
+                "security_score":    final_state.get("security_score"),
+                "compliance_score":  final_state.get("compliance_score"),
+                "enterprise_score":  final_state.get("enterprise_score"),
+                "deploy_gate":       final_state.get("deploy_gate"),
+                "audit_reports":     final_state.get("audit_reports", {}),
                 "updated_at":        datetime.utcnow().isoformat(),
             }
         else:
@@ -232,6 +237,11 @@ async def get_job_result(job_id: str):
         attempt_number=data.get("attempt_number"),
         error_message=data.get("error_message"),
         compile_errors=data.get("compile_errors"),
+        security_score=data.get("security_score"),
+        compliance_score=data.get("compliance_score"),
+        enterprise_score=data.get("enterprise_score"),
+        deploy_gate=data.get("deploy_gate"),
+        audit_reports=data.get("audit_reports"),
     )
 
 
