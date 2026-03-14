@@ -11,6 +11,7 @@ from agents.fix_agent import run_fix_agent, run_fix_agent_sandbox
 from agents.deploy_agent import run_deploy_agent, run_deploy_agent_sandbox
 from sandbox.daml_sandbox import DamlSandbox
 from tools.daml_tools import create_template, add_signatory, add_choice
+from security.hybrid_auditor import run_hybrid_audit
 from config import get_settings
 
 logger = structlog.get_logger()
@@ -202,6 +203,83 @@ def fallback_node(state: dict) -> dict:
     }
 
 
+def audit_node(state: dict) -> dict:
+    """Run enterprise security audit and compliance analysis on compiled DAML code."""
+    job_id = state.get("job_id", "unknown")
+    logger.info("Node: audit", job_id=job_id)
+    _push_status(state, "Running security audit & compliance analysis...", 82)
+
+    daml_code = state.get("generated_code", "")
+    if not daml_code:
+        logger.warning("No DAML code to audit, skipping")
+        return {
+            **state,
+            "audit_result": None,
+            "security_score": None,
+            "compliance_score": None,
+            "current_step": "Deploying to Canton...",
+            "progress": 85,
+        }
+
+    try:
+        contract_name = (
+            state.get("structured_intent", {})
+            .get("daml_templates_needed", ["Contract"])[0]
+        )
+    except (IndexError, TypeError):
+        contract_name = "Contract"
+
+    try:
+        audit_result = run_hybrid_audit(
+            daml_code=daml_code,
+            contract_name=contract_name,
+            compliance_profile="generic",
+        )
+
+        security_score = audit_result.get("combined_scores", {}).get("security_score")
+        compliance_score = audit_result.get("combined_scores", {}).get("compliance_score")
+        enterprise_score = audit_result.get("combined_scores", {}).get("enterprise_score")
+        deploy_gate = audit_result.get("combined_scores", {}).get("deploy_gate", True)
+
+        _push_status(
+            state,
+            f"Audit complete — Security: {security_score}/100, Compliance: {compliance_score}/100",
+            85,
+        )
+
+        logger.info(
+            "Audit node completed",
+            job_id=job_id,
+            security_score=security_score,
+            compliance_score=compliance_score,
+            enterprise_score=enterprise_score,
+            deploy_gate=deploy_gate,
+        )
+
+        return {
+            **state,
+            "audit_result": audit_result,
+            "security_score": security_score,
+            "compliance_score": compliance_score,
+            "enterprise_score": enterprise_score,
+            "deploy_gate": deploy_gate,
+            "audit_reports": audit_result.get("reports", {}),
+            "current_step": "Deploying to Canton..." if deploy_gate else "Security gate failed — deploying anyway...",
+            "progress": 85,
+        }
+
+    except Exception as e:
+        logger.error("Audit node failed, continuing to deploy", error=str(e))
+        return {
+            **state,
+            "audit_result": None,
+            "security_score": None,
+            "compliance_score": None,
+            "current_step": "Audit failed, deploying to Canton...",
+            "progress": 85,
+        }
+
+
 def deploy_node(state: dict) -> dict:
     logger.info("Node: deploy", job_id=state.get("job_id"))
     _push_status(state, "Deploying to Canton ledger...", 90)
@@ -261,9 +339,9 @@ def error_node(state: dict) -> dict:
     }
 
 
-def _route_after_compile(state: dict) -> Literal["deploy", "fix", "fallback"]:
+def _route_after_compile(state: dict) -> Literal["audit", "fix", "fallback"]:
     if state.get("compile_success"):
-        return "deploy"
+        return "audit"
 
     attempt = state.get("attempt_number", 0)
 
@@ -295,6 +373,7 @@ def build_pipeline() -> CompiledStateGraph:
     graph.add_node("compile",  compile_node)
     graph.add_node("fix",      fix_node)
     graph.add_node("fallback", fallback_node)
+    graph.add_node("audit",    audit_node)
     graph.add_node("deploy",   deploy_node)
     graph.add_node("error",    error_node)
 
@@ -306,10 +385,11 @@ def build_pipeline() -> CompiledStateGraph:
     graph.add_conditional_edges(
         "compile",
         _route_after_compile,
-        {"deploy": "deploy", "fix": "fix", "fallback": "fallback"},
+        {"audit": "audit", "fix": "fix", "fallback": "fallback"},
     )
     graph.add_edge("fix", "compile")
     graph.add_edge("fallback", "compile")  # recompile after fallback — guaranteed success
+    graph.add_edge("audit", "deploy")
     graph.add_edge("deploy", END)
     graph.add_edge("error",  END)
 
