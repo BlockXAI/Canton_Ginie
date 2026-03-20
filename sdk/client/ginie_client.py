@@ -426,3 +426,109 @@ class GinieClient:
             Dict with DAML SDK version, RAG status, and Redis status.
         """
         return self._request("GET", "/health")
+
+    # ------------------------------------------------------------------
+    # 12. Ledger Status
+    # ------------------------------------------------------------------
+
+    def ledger_status(self) -> dict:
+        """Check Canton ledger connectivity and basic stats.
+
+        Returns:
+            Dict with status (online/offline), party count, package count,
+            canton_url, and environment.
+        """
+        return self._request("GET", "/ledger/status")
+
+    # ------------------------------------------------------------------
+    # 13. List Parties
+    # ------------------------------------------------------------------
+
+    def list_parties(self) -> list[dict]:
+        """List all parties known to the Canton ledger.
+
+        Returns:
+            List of dicts with identifier, displayName, and isLocal.
+        """
+        data = self._request("GET", "/ledger/parties")
+        return data.get("parties", [])
+
+    # ------------------------------------------------------------------
+    # 14. List Contracts
+    # ------------------------------------------------------------------
+
+    def list_contracts(
+        self,
+        template_ids: list[str] | None = None,
+        party: str | None = None,
+    ) -> list[dict]:
+        """Query active contracts on the Canton ledger.
+
+        Args:
+            template_ids: Optional list of template IDs to filter by.
+            party: Optional party to act as for the query.
+
+        Returns:
+            List of contract dicts with contractId, templateId, payload,
+            signatories, and observers.
+        """
+        payload: dict = {}
+        if template_ids:
+            payload["template_ids"] = template_ids
+        if party:
+            payload["party"] = party
+        data = self._request("POST", "/ledger/contracts", json=payload)
+        return data.get("contracts", [])
+
+    # ------------------------------------------------------------------
+    # 15. Verify Contract
+    # ------------------------------------------------------------------
+
+    def verify_contract(self, contract_id: str) -> dict:
+        """Verify that a contract exists on the Canton ledger.
+
+        Args:
+            contract_id: The contract ID to verify.
+
+        Returns:
+            Dict with verified (bool), contract details if found,
+            or error message if not found.
+        """
+        return self._request("GET", f"/ledger/verify/{contract_id}")
+
+    # ------------------------------------------------------------------
+    # 16. List Packages
+    # ------------------------------------------------------------------
+
+    def list_packages(self) -> list[str]:
+        """List all uploaded DAR packages on the Canton ledger.
+
+        Returns:
+            List of package ID strings.
+        """
+        data = self._request("GET", "/ledger/packages")
+        return data.get("packages", [])
+
+    # ------------------------------------------------------------------
+    # 17. Fetch Contract Detail
+    # ------------------------------------------------------------------
+
+    def fetch_contract(self, contract_id: str, template_id: str | None = None) -> dict:
+        """Fetch a specific contract by its ID.
+
+        Args:
+            contract_id: The contract ID to fetch.
+            template_id: Optional template ID for faster lookup.
+
+        Returns:
+            Dict with full contract details (contractId, templateId,
+            payload, signatories, observers).
+
+        Raises:
+            GinieAPIError: If the contract is not found (404).
+        """
+        payload: dict = {"contract_id": contract_id}
+        if template_id:
+            payload["template_id"] = template_id
+        data = self._request("POST", "/ledger/contracts/fetch", json=payload)
+        return data.get("contract", {})

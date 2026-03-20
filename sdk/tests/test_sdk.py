@@ -256,6 +256,102 @@ class TestClientContextManager(unittest.TestCase):
                 self.skipTest("Backend not running")
 
 
+class TestLedgerExplorer(unittest.TestCase):
+    """Test ledger explorer methods — requires backend + Canton."""
+
+    def test_ledger_status(self):
+        client = GinieClient(base_url=BASE_URL)
+        try:
+            client.health()
+        except GinieAPIError:
+            self.skipTest("Backend not running")
+
+        try:
+            status = client.ledger_status()
+            self.assertIn("status", status)
+            self.assertIn(status["status"], ("online", "offline"))
+            self.assertIn("environment", status)
+            print(f"  Ledger: {status['status']} ({status.get('environment')})")
+        finally:
+            client.close()
+
+    def test_list_parties(self):
+        client = GinieClient(base_url=BASE_URL)
+        try:
+            client.health()
+        except GinieAPIError:
+            self.skipTest("Backend not running")
+
+        try:
+            status = client.ledger_status()
+            if status.get("status") != "online":
+                self.skipTest("Canton not running")
+
+            parties = client.list_parties()
+            self.assertIsInstance(parties, list)
+            print(f"  Parties: {len(parties)} found")
+            for p in parties[:3]:
+                print(f"    - {p.get('displayName', '?')} (local={p.get('isLocal')})")
+        finally:
+            client.close()
+
+    def test_list_packages(self):
+        client = GinieClient(base_url=BASE_URL)
+        try:
+            client.health()
+        except GinieAPIError:
+            self.skipTest("Backend not running")
+
+        try:
+            status = client.ledger_status()
+            if status.get("status") != "online":
+                self.skipTest("Canton not running")
+
+            packages = client.list_packages()
+            self.assertIsInstance(packages, list)
+            print(f"  Packages: {len(packages)} uploaded")
+        finally:
+            client.close()
+
+    def test_list_contracts(self):
+        client = GinieClient(base_url=BASE_URL)
+        try:
+            client.health()
+        except GinieAPIError:
+            self.skipTest("Backend not running")
+
+        try:
+            status = client.ledger_status()
+            if status.get("status") != "online":
+                self.skipTest("Canton not running")
+
+            contracts = client.list_contracts()
+            self.assertIsInstance(contracts, list)
+            print(f"  Contracts: {len(contracts)} active")
+            for c in contracts[:3]:
+                print(f"    - {c.get('contractId', '?')[:16]}... ({c.get('templateId', '?')})")
+        finally:
+            client.close()
+
+    def test_verify_contract_not_found(self):
+        client = GinieClient(base_url=BASE_URL)
+        try:
+            client.health()
+        except GinieAPIError:
+            self.skipTest("Backend not running")
+
+        try:
+            status = client.ledger_status()
+            if status.get("status") != "online":
+                self.skipTest("Canton not running")
+
+            result = client.verify_contract("nonexistent-contract-id-12345")
+            self.assertFalse(result.get("verified", True))
+            print(f"  Verify nonexistent: verified={result.get('verified')}")
+        finally:
+            client.close()
+
+
 # ---------------------------------------------------------------------------
 # Run tests
 # ---------------------------------------------------------------------------
@@ -277,6 +373,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestClientAudit))
     suite.addTests(loader.loadTestsFromTestCase(TestClientGeneration))
     suite.addTests(loader.loadTestsFromTestCase(TestClientContextManager))
+    suite.addTests(loader.loadTestsFromTestCase(TestLedgerExplorer))
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

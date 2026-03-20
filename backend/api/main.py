@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
 from api.audit_routes import audit_router
+from api.ledger_routes import ledger_router
 from config import get_settings
 
 logger = structlog.get_logger()
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router, prefix="/api/v1", tags=["contracts"])
     app.include_router(audit_router, prefix="/api/v1", tags=["audit", "compliance"])
+    app.include_router(ledger_router, prefix="/api/v1", tags=["ledger-explorer"])
 
     return app
 

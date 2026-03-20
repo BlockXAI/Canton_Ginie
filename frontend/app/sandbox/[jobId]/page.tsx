@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Database,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -537,6 +538,13 @@ export default function SandboxPage() {
               >
                 Generate Another
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </Link>
+              <Link
+                href="/explorer"
+                className="group inline-flex items-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-6 py-3 text-sm font-semibold text-indigo-300 transition-all hover:bg-indigo-500/20 hover:text-indigo-200"
+              >
+                <Database className="h-4 w-4" />
+                Ledger Explorer
               </Link>
             </div>
           </div>
