@@ -1,0 +1,698 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  ArrowLeft,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Copy,
+  Check,
+  Search,
+  Users,
+  Package,
+  FileText,
+  Eye,
+  Shield,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Database,
+  Activity,
+} from "lucide-react";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface Party {
+  identifier: string;
+  displayName: string;
+  isLocal: boolean;
+}
+
+interface Contract {
+  contractId: string;
+  templateId: string;
+  payload: Record<string, unknown>;
+  signatories: string[];
+  observers: string[];
+  agreementText: string;
+}
+
+interface LedgerStatus {
+  status: string;
+  canton_url: string;
+  environment: string;
+  parties: number;
+  packages: number;
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      className="ml-1 shrink-0 rounded-md p-1 text-white/30 transition-colors hover:bg-white/10 hover:text-white/60"
+      title="Copy"
+    >
+      {copied ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
+function truncate(s: string, n: number = 24): string {
+  return s.length > n ? s.slice(0, n) + "..." : s;
+}
+
+function StatusDot({ online }: { online: boolean }) {
+  return (
+    <span className={`inline-block h-2.5 w-2.5 rounded-full ${online ? "bg-green-400 shadow-[0_0_6px_rgba(34,197,94,0.5)]" : "bg-red-400 shadow-[0_0_6px_rgba(239,68,68,0.5)]"}`} />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab Components
+// ---------------------------------------------------------------------------
+
+function ContractsTab() {
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Contract | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const fetchContracts = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await fetch(`${API_URL}/ledger/contracts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setContracts(data.contracts || []);
+    } catch (e: any) {
+      setError(e.message || "Failed to fetch contracts");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchContracts(); }, []);
+
+  const filtered = contracts.filter(
+    (c) =>
+      c.contractId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.templateId.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+        <span className="ml-3 text-white/50">Querying ledger...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-6 text-center">
+        <XCircle className="mx-auto h-8 w-8 text-red-400" />
+        <p className="mt-2 text-sm text-red-300">{error}</p>
+        <button onClick={fetchContracts} className="mt-3 rounded-lg bg-white/5 px-4 py-2 text-xs text-white/60 hover:bg-white/10">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Search bar */}
+      <div className="mb-4 flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+          <input
+            type="text"
+            placeholder="Search by contract ID or template..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full rounded-lg border border-white/10 bg-white/5 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-white/30 focus:border-indigo-500/50 focus:outline-none"
+          />
+        </div>
+        <button onClick={fetchContracts} className="rounded-lg border border-white/10 bg-white/5 p-2.5 text-white/50 hover:bg-white/10 hover:text-white">
+          <RefreshCw className="h-4 w-4" />
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="py-16 text-center text-white/40">
+          <FileText className="mx-auto h-10 w-10 text-white/20" />
+          <p className="mt-3">No contracts found on ledger</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Header */}
+          <div className="grid grid-cols-12 gap-4 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-white/30">
+            <div className="col-span-3">Contract ID</div>
+            <div className="col-span-5">Template ID</div>
+            <div className="col-span-2">Signatories</div>
+            <div className="col-span-2 text-right">Actions</div>
+          </div>
+
+          {filtered.map((c) => (
+            <div key={c.contractId}>
+              <div
+                className={`grid cursor-pointer grid-cols-12 gap-4 rounded-lg border px-4 py-3 transition-all ${
+                  selected?.contractId === c.contractId
+                    ? "border-indigo-500/40 bg-indigo-500/10"
+                    : "border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]"
+                }`}
+                onClick={() => setSelected(selected?.contractId === c.contractId ? null : c)}
+              >
+                <div className="col-span-3 flex items-center gap-2">
+                  <span className="font-mono text-xs text-white/80">{truncate(c.contractId, 16)}</span>
+                  <CopyButton text={c.contractId} />
+                </div>
+                <div className="col-span-5">
+                  <span className="font-mono text-xs text-indigo-300">{truncate(c.templateId, 50)}</span>
+                </div>
+                <div className="col-span-2 flex items-center gap-1">
+                  <Users className="h-3 w-3 text-white/30" />
+                  <span className="text-xs text-white/50">{c.signatories.length}</span>
+                </div>
+                <div className="col-span-2 flex items-center justify-end">
+                  {selected?.contractId === c.contractId ? (
+                    <ChevronUp className="h-4 w-4 text-white/30" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-white/30" />
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded detail */}
+              {selected?.contractId === c.contractId && (
+                <div className="mx-2 mt-1 space-y-4 rounded-b-lg border border-t-0 border-white/5 bg-white/[0.02] p-5">
+                  {/* Contract ID */}
+                  <div>
+                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Contract ID</h4>
+                    <div className="mt-1 flex items-center">
+                      <code className="break-all font-mono text-xs text-white/70">{c.contractId}</code>
+                      <CopyButton text={c.contractId} />
+                    </div>
+                  </div>
+
+                  {/* Template */}
+                  <div>
+                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Template</h4>
+                    <div className="mt-1 flex items-center">
+                      <code className="break-all font-mono text-xs text-indigo-300">{c.templateId}</code>
+                      <CopyButton text={c.templateId} />
+                    </div>
+                  </div>
+
+                  {/* Signatories */}
+                  <div>
+                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Signatories</h4>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {c.signatories.map((s, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-3 py-1 text-xs text-green-300 border border-green-500/20">
+                          <Shield className="h-3 w-3" />
+                          {truncate(s, 30)}
+                          <CopyButton text={s} />
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Observers */}
+                  {c.observers.length > 0 && (
+                    <div>
+                      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Observers</h4>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {c.observers.map((o, i) => (
+                          <span key={i} className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-3 py-1 text-xs text-blue-300 border border-blue-500/20">
+                            <Eye className="h-3 w-3" />
+                            {truncate(o, 30)}
+                            <CopyButton text={o} />
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Payload */}
+                  <div>
+                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Contract Payload</h4>
+                    <pre className="mt-1 max-h-64 overflow-auto rounded-lg border border-white/5 bg-black/40 p-4 font-mono text-xs text-white/60 scrollbar-hide">
+                      {JSON.stringify(c.payload, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 text-center text-xs text-white/30">{filtered.length} contract{filtered.length !== 1 ? "s" : ""} on ledger</div>
+    </div>
+  );
+}
+
+function PartiesTab() {
+  const [parties, setParties] = useState<Party[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const fetchParties = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await fetch(`${API_URL}/ledger/parties`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setParties(data.parties || []);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchParties(); }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+        <span className="ml-3 text-white/50">Fetching parties...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-6 text-center">
+        <XCircle className="mx-auto h-8 w-8 text-red-400" />
+        <p className="mt-2 text-sm text-red-300">{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-sm text-white/40">{parties.length} parties on ledger</span>
+        <button onClick={fetchParties} className="rounded-lg border border-white/10 bg-white/5 p-2 text-white/50 hover:bg-white/10 hover:text-white">
+          <RefreshCw className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {/* Header */}
+        <div className="grid grid-cols-12 gap-4 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-white/30">
+          <div className="col-span-3">Display Name</div>
+          <div className="col-span-7">Identifier</div>
+          <div className="col-span-2 text-right">Local</div>
+        </div>
+
+        {parties.map((p, idx) => (
+          <div key={idx} className="grid grid-cols-12 gap-4 rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3 hover:border-white/10 hover:bg-white/[0.04] transition-all">
+            <div className="col-span-3 flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-bold text-indigo-300">
+                {(p.displayName || "?").charAt(0).toUpperCase()}
+              </div>
+              <span className="text-sm font-medium text-white/80">{p.displayName || "—"}</span>
+            </div>
+            <div className="col-span-7 flex items-center gap-1">
+              <code className="truncate font-mono text-xs text-white/50">{p.identifier}</code>
+              <CopyButton text={p.identifier} />
+            </div>
+            <div className="col-span-2 flex items-center justify-end">
+              {p.isLocal ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2.5 py-1 text-[10px] font-medium text-green-400 border border-green-500/20">
+                  <CheckCircle2 className="h-3 w-3" /> Local
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1 text-[10px] font-medium text-white/40 border border-white/10">
+                  Remote
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PackagesTab() {
+  const [packages, setPackages] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const fetchPackages = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await fetch(`${API_URL}/ledger/packages`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setPackages(data.packages || []);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchPackages(); }, []);
+
+  const filtered = packages.filter((p) => p.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+        <span className="ml-3 text-white/50">Fetching packages...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-6 text-center">
+        <XCircle className="mx-auto h-8 w-8 text-red-400" />
+        <p className="mt-2 text-sm text-red-300">{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+          <input
+            type="text"
+            placeholder="Search packages..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full rounded-lg border border-white/10 bg-white/5 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-white/30 focus:border-indigo-500/50 focus:outline-none"
+          />
+        </div>
+        <button onClick={fetchPackages} className="rounded-lg border border-white/10 bg-white/5 p-2.5 text-white/50 hover:bg-white/10 hover:text-white">
+          <RefreshCw className="h-4 w-4" />
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="py-16 text-center text-white/40">
+          <Package className="mx-auto h-10 w-10 text-white/20" />
+          <p className="mt-3">No packages found</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((pkg, idx) => (
+            <div key={idx} className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3 hover:border-white/10 hover:bg-white/[0.04] transition-all">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500/20">
+                  <Package className="h-4 w-4 text-purple-300" />
+                </div>
+                <code className="font-mono text-xs text-white/70">{pkg}</code>
+              </div>
+              <CopyButton text={pkg} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 text-center text-xs text-white/30">{filtered.length} package{filtered.length !== 1 ? "s" : ""} uploaded</div>
+    </div>
+  );
+}
+
+function VerifyTab() {
+  const [contractId, setContractId] = useState("");
+  const [result, setResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const verify = async () => {
+    if (!contractId.trim()) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const resp = await fetch(`${API_URL}/ledger/verify/${encodeURIComponent(contractId)}`);
+      const data = await resp.json();
+      setResult(data);
+    } catch (e: any) {
+      setResult({ verified: false, error: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <label className="text-xs font-semibold uppercase tracking-wider text-white/30">Contract ID</label>
+        <div className="mt-2 flex gap-3">
+          <input
+            type="text"
+            placeholder="Paste contract ID to verify..."
+            value={contractId}
+            onChange={(e) => setContractId(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && verify()}
+            className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white placeholder:text-white/30 focus:border-indigo-500/50 focus:outline-none"
+          />
+          <button
+            onClick={verify}
+            disabled={loading || !contractId.trim()}
+            className="rounded-lg bg-indigo-600 px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-40"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify"}
+          </button>
+        </div>
+      </div>
+
+      {result && (
+        <div className={`rounded-xl border p-6 ${result.verified ? "border-green-500/20 bg-green-500/5" : "border-red-500/20 bg-red-500/5"}`}>
+          <div className="flex items-center gap-3">
+            {result.verified ? (
+              <>
+                <CheckCircle2 className="h-8 w-8 text-green-400" />
+                <div>
+                  <h3 className="text-lg font-semibold text-green-300">Contract Verified</h3>
+                  <p className="text-sm text-green-300/60">This contract exists and is active on the Canton ledger</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <XCircle className="h-8 w-8 text-red-400" />
+                <div>
+                  <h3 className="text-lg font-semibold text-red-300">Not Found</h3>
+                  <p className="text-sm text-red-300/60">{result.error || "Contract not found on ledger"}</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {result.verified && (
+            <div className="mt-6 space-y-4">
+              <div>
+                <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Template</h4>
+                <code className="mt-1 block font-mono text-xs text-indigo-300">{result.templateId}</code>
+              </div>
+
+              {result.signatories?.length > 0 && (
+                <div>
+                  <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Signatories</h4>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {result.signatories.map((s: string, i: number) => (
+                      <span key={i} className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-3 py-1 text-xs text-green-300 border border-green-500/20">
+                        <Shield className="h-3 w-3" />
+                        {truncate(s, 30)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {result.payload && (
+                <div>
+                  <h4 className="text-[10px] font-semibold uppercase tracking-wider text-white/30">Payload</h4>
+                  <pre className="mt-1 max-h-48 overflow-auto rounded-lg border border-white/5 bg-black/40 p-4 font-mono text-xs text-white/60 scrollbar-hide">
+                    {JSON.stringify(result.payload, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main Explorer Page
+// ---------------------------------------------------------------------------
+
+type TabKey = "contracts" | "parties" | "packages" | "verify";
+
+export default function ExplorerPage() {
+  const [activeTab, setActiveTab] = useState<TabKey>("contracts");
+  const [ledgerStatus, setLedgerStatus] = useState<LedgerStatus | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_URL}/ledger/status`)
+      .then((r) => r.json())
+      .then(setLedgerStatus)
+      .catch(() => setLedgerStatus({ status: "offline", canton_url: "", environment: "", parties: 0, packages: 0, error: "Cannot reach backend" }));
+  }, []);
+
+  const tabs: { key: TabKey; label: string; icon: React.ReactNode; count?: number }[] = [
+    { key: "contracts", label: "Contracts", icon: <FileText className="h-4 w-4" /> },
+    { key: "parties", label: "Parties", icon: <Users className="h-4 w-4" />, count: ledgerStatus?.parties ?? undefined },
+    { key: "packages", label: "Packages", icon: <Package className="h-4 w-4" />, count: ledgerStatus?.packages ?? undefined },
+    { key: "verify", label: "Verify", icon: <Shield className="h-4 w-4" /> },
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#03040A]">
+      {/* Header */}
+      <div className="border-b border-white/5 bg-[#03040A]/80 backdrop-blur-xl sticky top-0 z-50">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-4">
+            <Link href="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors">
+              <ArrowLeft className="h-4 w-4" />
+              <span className="text-sm">Home</span>
+            </Link>
+            <div className="h-5 w-px bg-white/10" />
+            <div className="flex items-center gap-2">
+              <Database className="h-5 w-5 text-indigo-400" />
+              <h1 className="text-lg font-semibold text-white">Ledger Explorer</h1>
+            </div>
+          </div>
+
+          {/* Status badge */}
+          {ledgerStatus && (
+            <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-1.5">
+              <StatusDot online={ledgerStatus.status === "online"} />
+              <span className="text-xs text-white/60">
+                {ledgerStatus.status === "online" ? "Canton Online" : "Canton Offline"}
+              </span>
+              <span className="text-[10px] text-white/30">
+                {ledgerStatus.environment?.toUpperCase()}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-6xl px-6 py-8">
+        {/* Ledger summary cards */}
+        {ledgerStatus?.status === "online" && (
+          <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-4">
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
+                  <Activity className="h-5 w-5 text-green-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-white">{ledgerStatus.status === "online" ? "Online" : "Offline"}</p>
+                  <p className="text-[10px] uppercase tracking-wider text-white/30">Ledger Status</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-500/10">
+                  <Users className="h-5 w-5 text-indigo-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-white">{ledgerStatus.parties >= 0 ? ledgerStatus.parties : "—"}</p>
+                  <p className="text-[10px] uppercase tracking-wider text-white/30">Parties</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-500/10">
+                  <Package className="h-5 w-5 text-purple-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-white">{ledgerStatus.packages >= 0 ? ledgerStatus.packages : "—"}</p>
+                  <p className="text-[10px] uppercase tracking-wider text-white/30">Packages</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10">
+                  <Database className="h-5 w-5 text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-mono font-bold text-white truncate">{ledgerStatus.canton_url || "—"}</p>
+                  <p className="text-[10px] uppercase tracking-wider text-white/30">{ledgerStatus.environment} endpoint</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="mb-6 flex items-center gap-1 rounded-xl border border-white/5 bg-white/[0.02] p-1">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium transition-all ${
+                activeTab === tab.key
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                  : "text-white/40 hover:bg-white/5 hover:text-white/70"
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+              {tab.count !== undefined && (
+                <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                  activeTab === tab.key ? "bg-white/20 text-white" : "bg-white/5 text-white/30"
+                }`}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab content */}
+        <div className="rounded-xl border border-white/5 bg-white/[0.02] p-6">
+          {activeTab === "contracts" && <ContractsTab />}
+          {activeTab === "parties" && <PartiesTab />}
+          {activeTab === "packages" && <PackagesTab />}
+          {activeTab === "verify" && <VerifyTab />}
+        </div>
+      </div>
+    </div>
+  );
+}
