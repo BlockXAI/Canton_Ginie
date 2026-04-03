@@ -213,20 +213,31 @@ def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, 
                 "enterprise_score":  final_state.get("enterprise_score"),
                 "deploy_gate":       final_state.get("deploy_gate"),
                 "audit_reports":     final_state.get("audit_reports", {}),
+                "deployment_note":   final_state.get("deployment_note", ""),
+                "diagram_mermaid":   final_state.get("diagram_mermaid", ""),
+                "project_files":     final_state.get("original_project_files") or final_state.get("project_files"),
                 "updated_at":        datetime.utcnow().isoformat(),
             }
             # Persist deployed contract to PostgreSQL
             _save_deployed_contract(job_id, final_state)
         else:
             result = {
-                "job_id":         job_id,
-                "status":         "failed",
-                "current_step":   final_state.get("current_step", "Failed"),
-                "progress":       0,
-                "error_message":  final_state.get("error_message", "Pipeline failed"),
-                "generated_code": final_state.get("generated_code", ""),
-                "compile_errors": final_state.get("compile_errors", []),
-                "updated_at":     datetime.utcnow().isoformat(),
+                "job_id":            job_id,
+                "status":            "failed",
+                "current_step":      final_state.get("current_step", "Failed"),
+                "progress":          0,
+                "error_message":     final_state.get("error_message", "Pipeline failed"),
+                "generated_code":    final_state.get("generated_code", ""),
+                "compile_errors":    final_state.get("compile_errors", []),
+                "structured_intent": final_state.get("structured_intent"),
+                "security_score":    final_state.get("security_score"),
+                "compliance_score":  final_state.get("compliance_score"),
+                "enterprise_score":  final_state.get("enterprise_score"),
+                "deploy_gate":       final_state.get("deploy_gate"),
+                "audit_reports":     final_state.get("audit_reports", {}),
+                "diagram_mermaid":   final_state.get("diagram_mermaid", ""),
+                "project_files":     final_state.get("original_project_files") or final_state.get("project_files"),
+                "updated_at":        datetime.utcnow().isoformat(),
             }
 
         _in_memory_jobs[job_id] = result
@@ -343,6 +354,9 @@ async def get_job_result(job_id: str):
         enterprise_score=data.get("enterprise_score"),
         deploy_gate=data.get("deploy_gate"),
         audit_reports=data.get("audit_reports"),
+        deployment_note=data.get("deployment_note"),
+        diagram_mermaid=data.get("diagram_mermaid"),
+        project_files=data.get("project_files"),
     )
 
 

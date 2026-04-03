@@ -44,6 +44,9 @@ class JobResultResponse(BaseModel):
     enterprise_score: Optional[float] = None
     deploy_gate: Optional[bool] = None
     audit_reports: Optional[dict] = None
+    deployment_note: Optional[str] = None
+    diagram_mermaid: Optional[str] = None
+    project_files: Optional[dict] = None
 
 
 class IterateRequest(BaseModel):

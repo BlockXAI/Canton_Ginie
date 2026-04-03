@@ -3,6 +3,7 @@ import structlog
 
 from config import get_settings
 from rag.vector_store import search_daml_patterns, search_signatures
+from security.generation_rules import format_rules_for_prompt
 from utils.llm_client import call_llm
 
 logger = structlog.get_logger()
@@ -60,6 +61,9 @@ ABSOLUTE RULES:
 19. Do NOT use module-qualified field access like `Template.field`
 
 OUTPUT: Return ONLY the raw Daml code starting with `module Main where`. Nothing else."""
+
+# Append pre-audit security rules to the system prompt
+WRITER_SYSTEM_PROMPT += format_rules_for_prompt()
 
 # Fallback template used when LLM fails or returns invalid code
 _FALLBACK_TEMPLATE = """module Main where

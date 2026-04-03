@@ -6,9 +6,12 @@ from langgraph.graph.state import CompiledStateGraph
 from pipeline.state import PipelineState
 from agents.intent_agent import run_intent_agent
 from agents.writer_agent import run_writer_agent, fetch_rag_context
+from agents.project_writer_agent import run_project_writer_agent
 from agents.compile_agent import run_compile_agent, run_compile_agent_sandbox
 from agents.fix_agent import run_fix_agent, run_fix_agent_sandbox
 from agents.deploy_agent import run_deploy_agent, run_deploy_agent_sandbox
+from agents.proposal_injector import inject_proposal_pattern
+from agents.diagram_agent import parse_daml_for_diagram, generate_mermaid
 from sandbox.daml_sandbox import DamlSandbox
 from tools.daml_tools import create_template, add_signatory, add_choice
 from security.hybrid_auditor import run_hybrid_audit
@@ -111,12 +114,114 @@ def generate_node(state: dict) -> dict:
             "current_step":   "Failed at code generation",
             "progress":       0,
         }
+
+    daml_code = result["daml_code"]
+    intent = state.get("structured_intent", {})
+
+    # Post-processing: inject Propose-Accept pattern if needed
+    if intent.get("needs_proposal"):
+        parties = intent.get("parties", ["issuer", "investor"])
+        initiator = parties[0] if parties else "issuer"
+        acceptors = parties[1:2] if len(parties) > 1 else ["acceptor"]
+        _push_status(state, "Injecting Propose-Accept pattern...", 42)
+        try:
+            daml_code = inject_proposal_pattern(daml_code, initiator, acceptors)
+            logger.info("Propose-Accept pattern injected", initiator=initiator, acceptors=acceptors)
+        except Exception as e:
+            logger.warning("Proposal injection failed, continuing with core template", error=str(e))
+
     return {
         **state,
-        "generated_code": result["daml_code"],
+        "generated_code": daml_code,
         "current_step":   "Compiling contract...",
         "progress":       50,
     }
+
+
+def generate_project_node(state: dict) -> dict:
+    """Multi-template project generation (project_mode == True)."""
+    logger.info("Node: generate_project", job_id=state.get("job_id"))
+    _push_status(state, "Generating multi-template DAML project...", 35)
+    result = run_project_writer_agent(
+        structured_intent=state["structured_intent"],
+        rag_context=state.get("rag_context", []),
+    )
+    if not result["success"]:
+        logger.error("Project generate node failed", error=result.get("error"))
+        return {
+            **state,
+            "error_message":  result.get("error", "Project writer agent failed"),
+            "is_fatal_error": True,
+            "current_step":   "Failed at project generation",
+            "progress":       0,
+        }
+
+    files = result["files"]
+    # Combine all files into a single code string for compile/audit/deploy
+    # (compile_node writes individual files but generated_code holds the combined view)
+    combined = "\n\n".join(f"-- FILE: {fname}\n{code}" for fname, code in files.items())
+
+    intent = state.get("structured_intent", {})
+
+    # Inject Propose-Accept on core template if needed
+    if intent.get("needs_proposal"):
+        parties = intent.get("parties", ["issuer", "investor"])
+        initiator = parties[0] if parties else "issuer"
+        acceptors = parties[1:2] if len(parties) > 1 else ["acceptor"]
+        _push_status(state, "Injecting Propose-Accept pattern...", 42)
+        # Find the core template file and inject proposal into it
+        core_name = result.get("primary_template", "")
+        core_file = f"daml/{core_name}.daml" if core_name else None
+        if core_file and core_file in files:
+            try:
+                files[core_file] = inject_proposal_pattern(files[core_file], initiator, acceptors)
+                # Rebuild combined view
+                combined = "\n\n".join(f"-- FILE: {fname}\n{code}" for fname, code in files.items())
+                logger.info("Propose-Accept injected into project", core_file=core_file)
+            except Exception as e:
+                logger.warning("Proposal injection failed in project mode", error=str(e))
+
+    return {
+        **state,
+        "generated_code":   combined,
+        "project_mode":     True,
+        "project_files":    files,
+        "daml_yaml":        result.get("daml_yaml", ""),
+        "primary_template": result.get("primary_template", ""),
+        "current_step":     "Compiling project...",
+        "progress":         50,
+    }
+
+
+def diagram_node(state: dict) -> dict:
+    """Generate a Mermaid contract flow diagram from the compiled DAML code."""
+    job_id = state.get("job_id", "unknown")
+    logger.info("Node: diagram", job_id=job_id)
+    _push_status(state, "Generating contract flow diagram...", 86)
+
+    try:
+        code = state.get("project_files") or state.get("generated_code", "")
+        spec = parse_daml_for_diagram(code)
+        mermaid = generate_mermaid(spec)
+        logger.info("Diagram generated",
+                    templates=len(spec.get("templates", [])),
+                    flows=len(spec.get("flows", [])))
+        return {
+            **state,
+            "diagram_mermaid": mermaid,
+            "diagram_spec":   spec,
+            "current_step":   "Deploying to Canton...",
+            "progress":       88,
+        }
+    except Exception as e:
+        logger.warning("Diagram generation failed, skipping", error=str(e))
+        return {
+            **state,
+            "diagram_mermaid": "",
+            "diagram_spec":   {},
+            "current_step":   "Deploying to Canton...",
+            "progress":       88,
+        }
 
 
 def compile_node(state: dict) -> dict:
@@ -126,7 +231,11 @@ def compile_node(state: dict) -> dict:
     _push_status(state, f"Compiling contract (attempt {attempt})...", 50)
 
     try:
-        result = run_compile_agent(state["generated_code"], job_id)
+        result = run_compile_agent(
+            state["generated_code"], job_id,
+            project_files=state.get("project_files"),
+            daml_yaml=state.get("daml_yaml", ""),
+        )
         if result["success"]:
             _push_status(state, "Compilation successful! Deploying...", 80)
             return {
@@ -191,15 +300,22 @@ def fallback_node(state: dict) -> dict:
     logger.info("Node: fallback (using guaranteed contract)", job_id=state.get("job_id"))
     _push_status(state, "Using fallback contract template", 75)
 
+    # Preserve original project files for the user even though we're falling back
+    original_project_files = state.get("project_files", {})
+
     return {
         **state,
-        "generated_code":   FALLBACK_CONTRACT,
-        "attempt_number":   0,
-        "compile_errors":   [],
-        "compile_success":  False,
-        "fallback_used":    True,
-        "current_step":     "Using fallback contract template",
-        "progress":         75,
+        "generated_code":           FALLBACK_CONTRACT,
+        "attempt_number":           0,
+        "compile_errors":           [],
+        "compile_success":          False,
+        "fallback_used":            True,
+        "project_mode":             False,
+        "project_files":            {},
+        "daml_yaml":                "",
+        "original_project_files":   original_project_files,
+        "current_step":             "Using fallback contract template",
+        "progress":                 75,
     }
 
 
@@ -302,17 +418,33 @@ def deploy_node(state: dict) -> dict:
         if result["success"]:
             _push_status(state, "Contract deployed! Verifying...", 95)
             template_name = "SimpleContract" if fallback_used else result.get("template_id", "")
+
+            # Build deployment note for Propose-Accept contracts
+            intent = state.get("structured_intent", {})
+            deployment_note = ""
+            if intent.get("needs_proposal") and not fallback_used:
+                proposal_tmpl = result.get("template_id", "").rsplit(":", 1)[-1] if result.get("template_id") else ""
+                if "Proposal" in proposal_tmpl or "Proposal" in template_name:
+                    parties = intent.get("parties", [])
+                    acceptor = parties[1] if len(parties) > 1 else "acceptor"
+                    deployment_note = (
+                        f"Created {proposal_tmpl or template_name} contract. "
+                        f"To complete the agreement, {acceptor} must exercise the Accept choice on this contract. "
+                        f"POST /v1/exercise with contractId and choice '{proposal_tmpl}_Accept'"
+                    )
+
             return {
                 **state,
-                "contract_id":   result["contract_id"],
-                "package_id":    result["package_id"],
-                "template_id":   result.get("template_id", ""),
-                "template":      template_name,
-                "parties":       result.get("parties", {}),
-                "explorer_link": result.get("explorer_link", ""),
-                "fallback_used": fallback_used,
-                "current_step":  "Contract deployed successfully!",
-                "progress":      100,
+                "contract_id":     result["contract_id"],
+                "package_id":      result["package_id"],
+                "template_id":     result.get("template_id", ""),
+                "template":        template_name,
+                "parties":         result.get("parties", {}),
+                "explorer_link":   result.get("explorer_link", ""),
+                "fallback_used":   fallback_used,
+                "deployment_note": deployment_note,
+                "current_step":    "Contract deployed successfully!",
+                "progress":        100,
             }
         else:
             return {
@@ -360,6 +492,13 @@ def _route_after_intent(state: dict) -> Literal["rag", "error"]:
     return "rag"
 
 
+def _route_after_rag(state: dict) -> Literal["generate", "generate_project"]:
+    """Route to single-template or multi-template generation."""
+    if state.get("structured_intent", {}).get("project_mode"):
+        return "generate_project"
+    return "generate"
+
+
 def _route_after_generate(state: dict) -> Literal["compile", "error"]:
     if state.get("is_fatal_error"):
         return "error"
@@ -369,21 +508,28 @@ def _route_after_generate(state: dict) -> Literal["compile", "error"]:
 def build_pipeline() -> CompiledStateGraph:
     graph = StateGraph(dict)
 
-    graph.add_node("intent",   intent_node)
-    graph.add_node("rag",      rag_node)
-    graph.add_node("generate", generate_node)
-    graph.add_node("compile",  compile_node)
-    graph.add_node("fix",      fix_node)
-    graph.add_node("fallback", fallback_node)
-    graph.add_node("audit",    audit_node)
-    graph.add_node("deploy",   deploy_node)
-    graph.add_node("error",    error_node)
+    graph.add_node("intent",           intent_node)
+    graph.add_node("rag",              rag_node)
+    graph.add_node("generate",         generate_node)
+    graph.add_node("generate_project", generate_project_node)
+    graph.add_node("compile",          compile_node)
+    graph.add_node("fix",              fix_node)
+    graph.add_node("fallback",         fallback_node)
+    graph.add_node("audit",            audit_node)
+    graph.add_node("diagram",          diagram_node)
+    graph.add_node("deploy",           deploy_node)
+    graph.add_node("error",            error_node)
 
     graph.set_entry_point("intent")
 
     graph.add_conditional_edges("intent", _route_after_intent, {"rag": "rag", "error": "error"})
-    graph.add_edge("rag", "generate")
+    graph.add_conditional_edges(
+        "rag",
+        _route_after_rag,
+        {"generate": "generate", "generate_project": "generate_project"},
+    )
     graph.add_conditional_edges("generate", _route_after_generate, {"compile": "compile", "error": "error"})
+    graph.add_conditional_edges("generate_project", _route_after_generate, {"compile": "compile", "error": "error"})
     graph.add_conditional_edges(
         "compile",
         _route_after_compile,
@@ -391,7 +537,8 @@ def build_pipeline() -> CompiledStateGraph:
     )
     graph.add_edge("fix", "compile")
     graph.add_edge("fallback", "compile")  # recompile after fallback — guaranteed success
-    graph.add_edge("audit", "deploy")
+    graph.add_edge("audit", "diagram")
+    graph.add_edge("diagram", "deploy")
     graph.add_edge("deploy", END)
     graph.add_edge("error",  END)
 
@@ -577,6 +724,12 @@ def run_pipeline(job_id: str, user_input: str, canton_environment: str = "sandbo
         "canton_environment": canton_environment,
         "canton_url":         canton_url or settings.get_canton_url(),
         "party_id":           party_id,
+        "project_mode":       False,
+        "project_files":      {},
+        "daml_yaml":          "",
+        "diagram_mermaid":    "",
+        "diagram_spec":       {},
+        "deployment_note":    "",
     }
 
     # Register callback so pipeline nodes can push real-time updates
