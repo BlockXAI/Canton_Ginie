@@ -59,7 +59,9 @@ def resolve_daml_sdk() -> str:
     raise FileNotFoundError(_SDK_INSTALL_INSTRUCTIONS)
 
 
-def run_compile_agent(daml_code: str, job_id: str) -> dict:
+def run_compile_agent(daml_code: str, job_id: str, *,
+                      project_files: dict | None = None,
+                      daml_yaml: str = "") -> dict:
     settings = get_settings()
 
     try:
@@ -76,7 +78,8 @@ def run_compile_agent(daml_code: str, job_id: str) -> dict:
             "error_summary": str(exc),
         }
 
-    project_dir = _create_project_dir(daml_code, job_id, settings.dar_output_dir)
+    project_dir = _create_project_dir(daml_code, job_id, settings.dar_output_dir,
+                                       project_files=project_files, daml_yaml=daml_yaml)
     logger.info("Running compile agent", job_id=job_id, sdk=sdk_path, project_dir=project_dir)
 
     result = _run_daml_build(project_dir, sdk_path)
@@ -288,21 +291,99 @@ def _strip_module_qualifier(m: re.Match) -> str:
     return field_name
 
 
-def _create_project_dir(daml_code: str, job_id: str, base_dir: str) -> str:
+def _create_project_dir(daml_code: str, job_id: str, base_dir: str,
+                        project_files: dict | None = None,
+                        daml_yaml: str = "") -> str:
+    """Create a project directory for ``daml build``.
+
+    If *project_files* is provided (project mode), write each file separately.
+    Otherwise fall back to single-file mode writing ``daml/Main.daml``.
+    """
     project_dir = os.path.join(base_dir, f"ginie-{job_id}")
     daml_src_dir = os.path.join(project_dir, "daml")
 
+    # Wipe source dir clean to avoid leftover files from prior attempts
+    if os.path.exists(daml_src_dir):
+        shutil.rmtree(daml_src_dir)
     Path(daml_src_dir).mkdir(parents=True, exist_ok=True)
 
-    sanitized = _sanitize_daml(daml_code)
-    with open(os.path.join(daml_src_dir, "Main.daml"), "w") as f:
-        f.write(sanitized)
+    if project_files:
+        # Project mode: write each file to its path
+        for fpath, code in project_files.items():
+            full_path = os.path.join(project_dir, fpath)
+            Path(full_path).parent.mkdir(parents=True, exist_ok=True)
+            sanitized = _sanitize_daml_project_file(code, fpath)
+            with open(full_path, "w") as f:
+                f.write(sanitized)
+        logger.info("Project files written", file_count=len(project_files),
+                    files=list(project_files.keys()))
+    else:
+        # Single-file mode
+        sanitized = _sanitize_daml(daml_code)
+        with open(os.path.join(daml_src_dir, "Main.daml"), "w") as f:
+            f.write(sanitized)
 
+    # Write daml.yaml
+    yaml_content = daml_yaml if daml_yaml else DAML_YAML_TEMPLATE.format(project_name="ginie-project")
     with open(os.path.join(project_dir, "daml.yaml"), "w") as f:
-        safe_name = "ginie-project"
-        f.write(DAML_YAML_TEMPLATE.format(project_name=safe_name))
+        f.write(yaml_content)
 
     return project_dir
+
+
+def _sanitize_daml_project_file(code: str, filepath: str) -> str:
+    """Sanitize a single DAML file in project mode.
+
+    Unlike single-file mode, we do NOT force module name to Main —
+    we preserve the module name as-is.
+    """
+    code = _fix_choice_ordering(code)
+    code = _fix_this_dot_refs(code)
+    code = _fix_bad_imports(code)
+    code = _strip_script_blocks(code)
+
+    # Merge multiple ensure clauses
+    lines = code.split("\n")
+    result = []
+    ensure_seen_in_template = False
+    in_where_block = False
+    pending_ensure: str | None = None
+
+    for line in lines:
+        stripped = line.lstrip()
+
+        if stripped.startswith("template ") or stripped.startswith("interface "):
+            ensure_seen_in_template = False
+            in_where_block = False
+            pending_ensure = None
+
+        if stripped.startswith("where"):
+            in_where_block = True
+
+        if in_where_block and stripped.startswith("ensure "):
+            if not ensure_seen_in_template:
+                ensure_seen_in_template = True
+                pending_ensure = line
+                continue
+            else:
+                extra_cond = stripped[len("ensure "):].strip()
+                if pending_ensure is not None:
+                    prev_cond = pending_ensure.lstrip()[len("ensure "):].strip()
+                    indent = len(pending_ensure) - len(pending_ensure.lstrip())
+                    pending_ensure = " " * indent + f"ensure {prev_cond} && {extra_cond}"
+                continue
+
+        if pending_ensure is not None:
+            result.append(pending_ensure)
+            pending_ensure = None
+
+        line = re.sub(r'\b([A-Z][a-zA-Z0-9_]*)\.([a-z][a-zA-Z0-9_]*)\b', _strip_module_qualifier, line)
+        result.append(line)
+
+    if pending_ensure is not None:
+        result.append(pending_ensure)
+
+    return "\n".join(result)
 
 
 def _run_daml_build(project_dir: str, daml_sdk_path: str) -> dict:

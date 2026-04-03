@@ -36,6 +36,20 @@ Privacy features available in Canton:
 
 Output ONLY valid JSON. No explanation, no markdown, just raw JSON.
 
+Multi-signatory contracts (Propose-Accept pattern):
+- If 2+ parties must AGREE to create a contract (both are signatories), set "needs_proposal": true
+- The initiator proposes, the other party accepts — this is the Canton Propose-Accept workflow
+- Keywords: "agreement", "both parties sign", "mutual consent", "bilateral", "multi-signatory"
+- If only one party creates the contract and others just observe, set "needs_proposal": false
+
+Project mode (multi-template output):
+- Set "project_mode": true when the request is complex enough to need multiple DAML templates
+- Triggers: complexity "high", 3+ features, 3+ templates needed, OR contract type involving
+  multiple lifecycle stages (bond issuance + coupon + redemption, trade + settlement, etc.)
+- When project_mode is true, list each template in "templates" with name, role, and parties:
+  roles: "core" (main business object), "lifecycle" (coupon, redemption), "transfer", "utility"
+- Simple single-template requests keep "project_mode": false
+
 Example output format:
 {
   "contract_type": "bond_tokenization",
@@ -43,11 +57,18 @@ Example output format:
   "features": ["coupon_payment", "redemption", "transfer"],
   "privacy_features": ["party_based_privacy"],
   "canton_specific": ["atomic_settlement", "party_model"],
-  "complexity": "medium",
+  "complexity": "high",
   "daml_templates_needed": ["Bond", "CouponPayment", "Redemption"],
   "business_constraints": ["coupon_rate must be between 0 and 1", "face_value must be positive"],
   "suggested_choices": ["PayCoupon", "Redeem", "Transfer"],
-  "description": "A bond tokenization contract where Goldman Sachs issues bonds to investors"
+  "description": "A bond tokenization contract where Goldman Sachs issues bonds to investors",
+  "needs_proposal": true,
+  "project_mode": true,
+  "templates": [
+    {"name": "Bond", "role": "core", "parties": ["issuer", "investor"]},
+    {"name": "CouponPayment", "role": "lifecycle", "parties": ["issuer", "investor"]},
+    {"name": "Redemption", "role": "lifecycle", "parties": ["issuer", "investor"]}
+  ]
 }"""
 
 
@@ -72,7 +93,15 @@ def run_intent_agent(user_input: str) -> dict:
             if field not in intent:
                 intent[field] = _get_default(field)
 
-        logger.info("Intent parsed", contract_type=intent.get("contract_type"), parties=intent.get("parties"))
+        # Post-process: ensure needs_proposal and project_mode are set
+        intent["needs_proposal"] = _detect_needs_proposal(intent)
+        intent["project_mode"] = _detect_project_mode(intent)
+
+        logger.info("Intent parsed",
+                    contract_type=intent.get("contract_type"),
+                    parties=intent.get("parties"),
+                    needs_proposal=intent.get("needs_proposal"),
+                    project_mode=intent.get("project_mode"))
         return {"success": True, "structured_intent": intent}
 
     except json.JSONDecodeError as e:
@@ -112,4 +141,74 @@ def _fallback_intent(user_input: str) -> dict:
         "business_constraints": [],
         "suggested_choices":    ["Transfer", "Archive"],
         "description":          user_input[:200],
+        "needs_proposal":       False,
+        "project_mode":         False,
+        "templates":            [],
     }
+
+
+_PROPOSAL_KEYWORDS = {
+    "agreement", "both parties", "mutual", "bilateral",
+    "multi-signatory", "co-sign", "jointly", "both sign",
+    "propose-accept", "propose accept", "proposal",
+    "counter-sign", "consent", "both agree",
+}
+
+
+def _detect_needs_proposal(intent: dict) -> bool:
+    """Determine if the contract needs a Propose-Accept workflow.
+
+    Uses the LLM's own assessment if present, otherwise falls back to
+    heuristic detection based on party count and description keywords.
+    """
+    # Trust the LLM if it explicitly set the field
+    if isinstance(intent.get("needs_proposal"), bool):
+        return intent["needs_proposal"]
+
+    # Heuristic: check description for multi-signatory keywords
+    desc = (intent.get("description") or "").lower()
+    for kw in _PROPOSAL_KEYWORDS:
+        if kw in desc:
+            return True
+
+    # Heuristic: 2+ parties that are both likely signatories
+    # (e.g., both named in features like "agreement")
+    parties = intent.get("parties", [])
+    features = " ".join(intent.get("features", [])).lower()
+    if len(parties) >= 2 and ("agreement" in features or "bilateral" in features):
+        return True
+
+    return False
+
+
+_PROJECT_MODE_TYPES = {
+    "bond_tokenization", "trade_settlement", "escrow",
+    "option_contract", "equity_token",
+}
+
+
+def _detect_project_mode(intent: dict) -> bool:
+    """Determine if the request warrants multi-template project generation."""
+    # Trust the LLM if it explicitly set the field
+    if isinstance(intent.get("project_mode"), bool):
+        return intent["project_mode"]
+
+    # Heuristic: high complexity
+    if intent.get("complexity") == "high":
+        return True
+
+    # Heuristic: 3+ templates requested
+    templates = intent.get("daml_templates_needed", [])
+    if len(templates) >= 3:
+        return True
+
+    # Heuristic: 3+ features
+    features = intent.get("features", [])
+    if len(features) >= 3:
+        return True
+
+    # Heuristic: known complex contract types
+    if intent.get("contract_type") in _PROJECT_MODE_TYPES:
+        return True
+
+    return False

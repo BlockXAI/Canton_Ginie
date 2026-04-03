@@ -1,0 +1,70 @@
+[
+  {
+    "index": 1,
+    "status": "FAILED",
+    "prompt": "Simple payment contract between sender and receive",
+    "error": "timed out"
+  },
+  {
+    "index": 2,
+    "status": "FAILED",
+    "prompt": "Bond contract between issuer and investor with fac",
+    "error": "DAR upload failed \u2014 HTTP 503: The server was not able to produce a timely response to your request.\r"
+  },
+  {
+    "index": 3,
+    "status": "SUCCESS",
+    "prompt": "Token swap contract between partyA and partyB exch",
+    "contract_id": "00d64f42e849a68346164946a856e3bd62a54fca",
+    "diagram_chars": 859
+  },
+  {
+    "index": 4,
+    "status": "SUCCESS",
+    "prompt": "Rental agreement between landlord and tenant with ",
+    "contract_id": "00d6bca330ba4d277fdec94c942a36fd506c32da",
+    "diagram_chars": 1064
+  },
+  {
+    "index": 5,
+    "status": "SUCCESS",
+    "prompt": "Insurance policy between insurer and policyholder ",
+    "contract_id": "008a54fea0280841f5821d6419d7cd01c860c43d",
+    "diagram_chars": 1174
+  },
+  {
+    "index": 6,
+    "status": "SUCCESS",
+    "prompt": "Supply chain contract between manufacturer and dis",
+    "contract_id": "007380645158de7d4a2d730daad4641a1c78905f",
+    "diagram_chars": 939
+  },
+  {
+    "index": 7,
+    "status": "SUCCESS",
+    "prompt": "Escrow contract between buyer, seller, and escrowA",
+    "contract_id": "00cddda5132858186f9e58c9762e46e8ce748174",
+    "diagram_chars": 539
+  },
+  {
+    "index": 8,
+    "status": "SUCCESS",
+    "prompt": "Voting contract between organizer and voter with p",
+    "contract_id": "00dde4bfe3ce5936ee686cb599243794e5034556",
+    "diagram_chars": 580
+  },
+  {
+    "index": 9,
+    "status": "SUCCESS",
+    "prompt": "Loan agreement between lender and borrower with pr",
+    "contract_id": "00b8902dec0023f027c6272fc9807ff233685ca9",
+    "diagram_chars": 1022
+  },
+  {
+    "index": 10,
+    "status": "SUCCESS",
+    "prompt": "NFT marketplace listing between seller and buyer w",
+    "contract_id": "00413437ef10425834c2c3b7495ff16f9c90dae0",
+    "diagram_chars": 514
+  }
+]

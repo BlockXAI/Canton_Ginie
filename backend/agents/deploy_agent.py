@@ -65,14 +65,21 @@ def _upload_dar(client: httpx.Client, canton_url: str, dar_bytes: bytes, auth: d
             f"DAR upload failed — HTTP {resp.status_code}: {resp.text[:400]}"
         )
     data = resp.json()
-    package_id = (
-        data.get("result")
-        or data.get("packageId")
-        or _compute_package_id(dar_bytes)
-    )
-    if isinstance(package_id, dict):
-        package_id = package_id.get("packageId", _compute_package_id(dar_bytes))
-    return str(package_id)
+    logger.info("DAR upload response", response_keys=list(data.keys()), result_type=type(data.get("result")).__name__)
+    # Canton JSON API returns {"result": 1, "status": 200} on success — no package ID.
+    # Only use result if it looks like a real package hash (64-char hex string).
+    result = data.get("result")
+    if isinstance(result, str) and len(result) == 64:
+        return result
+    if isinstance(result, dict):
+        pkg = result.get("packageId", "")
+        if isinstance(pkg, str) and len(pkg) == 64:
+            return pkg
+    pkg = data.get("packageId", "")
+    if isinstance(pkg, str) and len(pkg) == 64:
+        return pkg
+    # No usable package ID from upload response
+    return ""
 
 
 def _allocate_party(client: httpx.Client, canton_url: str, display_name: str, auth: dict) -> str:
@@ -169,13 +176,14 @@ def run_deploy_agent(
 
         auth = _auth_header(canton_environment)
 
-        # Step 1: Extract package ID from DAR manifest
-        package_id = _extract_package_id_from_dar(dar_path)
+        # Step 1: Extract package ID from DAR manifest (fallback)
+        manifest_package_id = _extract_package_id_from_dar(dar_path)
 
         with httpx.Client() as client:
-            # Step 2: Upload DAR
-            _upload_dar(client, canton_url, dar_bytes, auth)
-            logger.info("DAR uploaded", package_id=package_id)
+            # Step 2: Upload DAR — use package ID from Canton response
+            upload_package_id = _upload_dar(client, canton_url, dar_bytes, auth)
+            package_id = upload_package_id or manifest_package_id
+            logger.info("DAR uploaded", package_id=package_id, source="upload" if upload_package_id else "manifest")
 
             # Step 3: Allocate parties
             # If authenticated user has a party_id, use it as primary signatory
@@ -206,8 +214,17 @@ def run_deploy_agent(
                 templates = structured_intent.get("daml_templates_needed", ["Main"])
                 template_name = templates[0] if templates else "Main"
 
+            # If needs_proposal, deploy the Proposal template instead of the core
+            if structured_intent.get("needs_proposal") and daml_code:
+                proposal_name = f"{template_name}Proposal"
+                proposal_fields = _parse_template_fields(daml_code, proposal_name)
+                if proposal_fields:
+                    logger.info("Deploying proposal template instead of core",
+                                core=template_name, proposal=proposal_name)
+                    template_name = proposal_name
+
             # Step 5: Parse fields and build payload with proper defaults
-            fields = _parse_template_fields(daml_code) if daml_code else []
+            fields = _parse_template_fields(daml_code, template_name) if daml_code else []
 
             # Ensure enough distinct parties for all Party fields
             party_field_names = [f["name"] for f in fields if f["type"].strip() == "Party"]
@@ -224,18 +241,19 @@ def run_deploy_agent(
                         except Exception:
                             pass
 
-            payload = _build_payload(fields, allocated)
+            payload = _build_payload(fields, allocated, daml_code=daml_code, template_name=template_name)
 
             # If no fields found, use party mapping directly
             if not payload:
                 payload = dict(allocated)
 
             # Build fully-qualified template ID
-            module_name = _extract_module_name(daml_code) if daml_code else "Main"
+            module_name = (_extract_module_name(daml_code) if daml_code else None) or "Main"
             if package_id:
                 template_id = f"{package_id}:{module_name}:{template_name}"
             else:
                 template_id = f"{module_name}:{template_name}"
+            logger.info("Template ID resolved", module=module_name, template=template_name, template_id=template_id)
 
             logger.info("Creating contract", template_id=template_id, payload=payload)
 
@@ -307,13 +325,22 @@ def run_deploy_agent(
 
 
 def _read_daml_source(dar_path: str) -> str:
-    """Read the Main.daml source from the project directory next to the DAR."""
+    """Read DAML source from the project directory next to the DAR.
+
+    Scans all .daml files in the daml/ directory (not just Main.daml)
+    so that contracts with non-Main module names are found correctly.
+    """
     try:
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(dar_path)))
-        main_daml = os.path.join(project_dir, "daml", "Main.daml")
-        if os.path.exists(main_daml):
-            with open(main_daml, "r") as f:
-                return f.read()
+        daml_dir = os.path.join(project_dir, "daml")
+        if not os.path.isdir(daml_dir):
+            return ""
+        parts: list[str] = []
+        for fname in sorted(os.listdir(daml_dir)):
+            if fname.endswith(".daml"):
+                with open(os.path.join(daml_dir, fname), "r") as f:
+                    parts.append(f.read())
+        return "\n".join(parts)
     except Exception:
         pass
     return ""
@@ -348,32 +375,45 @@ def _compute_package_id(dar_bytes: bytes) -> str:
 
 
 def _extract_package_id_from_dar(dar_path: str) -> str:
-    """Read the main DALF package hash from META-INF/MANIFEST.MF inside the DAR zip."""
+    """Read the main DALF package hash from a DAR zip.
+
+    Strategy:
+    1. Parse META-INF/MANIFEST.MF for Main-Dalf entry
+    2. Fallback: scan zip entries for .dalf files and extract 64-char hex hash
+    """
     try:
         with zipfile.ZipFile(dar_path) as z:
             manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8")
-        # Reconstruct multi-line folded value (lines starting with a space are continuations)
-        lines: list[str] = []
-        for raw in manifest.splitlines():
-            if raw.startswith(" ") and lines:
-                lines[-1] += raw[1:]
-            else:
-                lines.append(raw)
-        for line in lines:
-            if line.startswith("Main-Dalf:"):
-                main_dalf = line.split(":", 1)[1].strip()
-                # Pattern:  {dir}-{hash}/{filename}-{hash}.dalf
-                # Extract 64-char hex hash from filename
-                import re as _re
-                m = _re.search(r"[/\\]([0-9a-f]{64})\.dalf$", main_dalf)
-                if m:
-                    return m.group(1)
-                # Fallback: any 64-char hex run in the path
-                m = _re.search(r"[0-9a-f]{64}", main_dalf)
-                if m:
-                    return m.group(0)
+
+            # Reconstruct multi-line folded value (lines starting with a space are continuations)
+            lines: list[str] = []
+            for raw in manifest.splitlines():
+                if raw.startswith(" ") and lines:
+                    lines[-1] += raw[1:]
+                else:
+                    lines.append(raw)
+            for line in lines:
+                if line.startswith("Main-Dalf:"):
+                    main_dalf = line.split(":", 1)[1].strip()
+                    logger.info("DAR manifest Main-Dalf", main_dalf=main_dalf)
+                    # Pattern:  {dir}-{hash}/{filename}-{hash}.dalf
+                    m = re.search(r"[/\\]([0-9a-f]{64})\.dalf$", main_dalf)
+                    if m:
+                        return m.group(1)
+                    # Fallback: any 64-char hex run in the path
+                    m = re.search(r"[0-9a-f]{64}", main_dalf)
+                    if m:
+                        return m.group(0)
+
+            # Strategy 2: scan zip entries for .dalf files
+            for name in z.namelist():
+                if name.endswith(".dalf") and "META-INF" not in name:
+                    m = re.search(r"([0-9a-f]{64})", name)
+                    if m:
+                        logger.info("Package ID from DALF filename", dalf=name, pkg=m.group(1))
+                        return m.group(1)
     except Exception as exc:
-        logger.warning("Could not extract package ID from DAR manifest", error=str(exc))
+        logger.warning("Could not extract package ID from DAR", error=str(exc))
     return ""
 
 
@@ -381,31 +421,76 @@ def _extract_package_id_from_dar(dar_path: str) -> str:
 # Sandbox-based async deploy agent using Canton v2 API
 # ---------------------------------------------------------------------------
 
-def _parse_template_fields(daml_code: str) -> list[dict]:
-    template_match = re.search(
-        r"template\s+\w+\s+with\s+(.*?)\s+where",
-        daml_code,
-        re.DOTALL,
-    )
+def _parse_template_fields(daml_code: str, template_name: str | None = None) -> list[dict]:
+    """Parse fields from a template's ``with`` block.
+
+    If *template_name* is given, parse that specific template;
+    otherwise parse the first template found.
+    """
+    if template_name:
+        pattern = rf"template\s+{re.escape(template_name)}\s+with\s+(.*?)\s+where"
+    else:
+        pattern = r"template\s+\w+\s+with\s+(.*?)\s+where"
+    template_match = re.search(pattern, daml_code, re.DOTALL)
     if not template_match:
         return []
 
     fields = []
     for line in template_match.group(1).split("\n"):
         line = line.strip()
-        if ":" in line:
+        if ":" in line and not line.startswith("--"):
             name, field_type = line.split(":", 1)
             fields.append({"name": name.strip(), "type": field_type.strip()})
     return fields
 
 
-def _build_payload(fields: list[dict], party_values: dict) -> dict:
+def _extract_ensure_text_values(daml_code: str, template_name: str | None = None) -> dict[str, str]:
+    """Parse ensure clauses to find valid string literals for Text fields.
+
+    For example, ``ensure status == "Pending"`` yields {"status": "Pending"}.
+    Also handles ``status == "Pending" || status == "Active"`` — picks the first.
+    """
+    hints: dict[str, str] = {}
+    if not daml_code:
+        return hints
+
+    # Find the ensure block for the target template
+    if template_name:
+        pat = rf"template\s+{re.escape(template_name)}\s+.*?\bensure\s+(.*?)\n\s*\n"
+    else:
+        pat = r"\bensure\s+(.*?)\n\s*\n"
+    m = re.search(pat, daml_code, re.DOTALL)
+    if not m:
+        # Try alternate: ensure up to next choice/key/deriving line
+        if template_name:
+            pat2 = rf"template\s+{re.escape(template_name)}\s+.*?\bensure\s+(.*?)(?=\n\s+(?:choice|key|deriving)\b)"
+        else:
+            pat2 = r"\bensure\s+(.*?)(?=\n\s+(?:choice|key|deriving)\b)"
+        m = re.search(pat2, daml_code, re.DOTALL)
+    if not m:
+        return hints
+
+    ensure_text = m.group(1)
+    # Find patterns like:  fieldName == "Value"
+    for field_match in re.finditer(r'(\w+)\s*==\s*"([^"]+)"', ensure_text):
+        fname = field_match.group(1)
+        fval = field_match.group(2)
+        if fname not in hints:
+            hints[fname] = fval
+    logger.info("Ensure text hints extracted", hints=hints)
+    return hints
+
+
+def _build_payload(fields: list[dict], party_values: dict, daml_code: str = "", template_name: str | None = None) -> dict:
     payload = {}
     party_ids = list(party_values.values())
     used_party_ids: set[str] = set()
     party_idx = 0
     numeric_counter = 0
     date_counter = 0
+
+    # Extract valid text values from ensure clauses to satisfy preconditions
+    ensure_hints = _extract_ensure_text_values(daml_code, template_name) if daml_code else {}
 
     for field in fields:
         name = field["name"]
@@ -434,21 +519,43 @@ def _build_payload(fields: list[dict], party_values: dict) -> dict:
             else:
                 payload[name] = name
         elif ftype in ("Decimal", "Numeric") or ftype.startswith("Numeric "):
-            # Use positive, distinct values (ensure clauses often check > 0)
+            # Smart defaults: rate fields use 0-1 range, others use larger values
             numeric_counter += 1
-            payload[name] = f"{100.0 * numeric_counter}"
+            name_lower = name.lower()
+            if "rate" in name_lower or "percent" in name_lower or "ratio" in name_lower:
+                payload[name] = f"{0.05 * numeric_counter}"
+            else:
+                payload[name] = f"{1000.0 * numeric_counter}"
         elif ftype == "Int" or ftype == "Int64":
             numeric_counter += 1
             payload[name] = max(1, numeric_counter)
         elif ftype == "Text":
-            payload[name] = f"sample-{name}"
+            # Use ensure-clause hints first, then smart defaults for common names
+            if name in ensure_hints:
+                payload[name] = ensure_hints[name]
+            else:
+                name_lower = name.lower()
+                if name_lower in ("status", "state"):
+                    payload[name] = "Pending"
+                elif name_lower in ("phase", "stage"):
+                    payload[name] = "Initial"
+                elif name_lower in ("type", "category", "kind"):
+                    payload[name] = "Standard"
+                elif name_lower in ("currency", "ccy"):
+                    payload[name] = "USD"
+                elif "name" in name_lower:
+                    payload[name] = f"Sample {name}"
+                elif "desc" in name_lower or "reason" in name_lower or "note" in name_lower:
+                    payload[name] = f"Auto-generated {name}"
+                else:
+                    payload[name] = f"sample-{name}"
         elif ftype == "Date":
-            # Use distinct future dates (ensure clauses often check end > start)
+            # Use distinct future dates (ensure clauses often check date > now)
             date_counter += 1
-            payload[name] = f"2025-{min(date_counter, 12):02d}-15"
+            payload[name] = f"2027-{min(date_counter + 5, 12):02d}-15"
         elif ftype in ("Time", "UTCTime"):
             date_counter += 1
-            payload[name] = f"2025-{min(date_counter, 12):02d}-15T00:00:00Z"
+            payload[name] = f"2027-{min(date_counter + 5, 12):02d}-15T00:00:00Z"
         elif ftype == "Bool":
             payload[name] = True
         elif ftype.startswith("["):

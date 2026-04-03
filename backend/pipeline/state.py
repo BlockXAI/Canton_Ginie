@@ -36,6 +36,15 @@ class PipelineState(BaseModel):
     # Authenticated user's party ID (if set, used as primary signatory)
     party_id: str = ""
 
+    # Project mode (multi-template generation)
+    project_mode: bool = False
+    project_files: dict = Field(default_factory=dict)  # {filename: code}
+    daml_yaml: str = ""
+
+    # Contract flow diagram
+    diagram_mermaid: str = ""
+    diagram_spec: dict = Field(default_factory=dict)
+
     class Config:
         arbitrary_types_allowed = True
 

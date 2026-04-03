@@ -13,10 +13,10 @@ RULES:
 1. Read the errors carefully
 2. Fix ONLY the broken section(s)
 3. Return the COMPLETE corrected Daml file
-4. Module MUST be named Main
+4. Preserve the original module name (it may NOT be Main in project mode)
 5. Use 2-space indentation
 6. No markdown fences in output
-7. Start with `module Main where`
+7. Start with `module <ModuleName> where`
 
 COMMON FIXES:
 - "No signatory" → Add `signatory <party>` in `where` block
@@ -29,7 +29,7 @@ COMMON FIXES:
 - `with` params MUST come BEFORE `controller` in choices
 - Decimal is built-in — never import DA.Decimal
 
-OUTPUT: Return ONLY corrected Daml code. No explanation. Start with `module Main where`."""
+OUTPUT: Return ONLY corrected Daml code. No explanation. Start with `module <ModuleName> where`."""
 
 ERROR_EXPLANATIONS = {
     "missing_signatory":    "Add `signatory <partyField>` in the `where` block.",
