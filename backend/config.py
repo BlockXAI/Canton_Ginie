@@ -87,4 +87,10 @@ def get_settings() -> Settings:
         s.jwt_secret = secrets.token_hex(32)
         _logger.warning("JWT_SECRET not configured — generated ephemeral secret (sandbox only)")
 
+    # --- Resolve relative chroma_persist_dir to absolute ---
+    chroma_path = Path(s.chroma_persist_dir)
+    if not chroma_path.is_absolute():
+        s.chroma_persist_dir = str((Path(__file__).parent / chroma_path).resolve())
+        _logger.info("Resolved chroma_persist_dir to absolute path", path=s.chroma_persist_dir)
+
     return s

@@ -142,6 +142,8 @@ def _job_row_to_dict(job) -> dict:
 
 _in_memory_jobs: dict = {}
 _jobs_lock = threading.Lock()
+_active_threads: dict[str, threading.Thread] = {}
+_threads_lock = threading.Lock()
 
 
 def _celery_has_workers() -> bool:
@@ -156,7 +158,8 @@ def _celery_has_workers() -> bool:
 def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, canton_url: str, party_id: str = ""):
     """Run pipeline in a dedicated thread — guaranteed to execute immediately."""
     logger.info("[THREAD] Starting pipeline", job_id=job_id, party_id=party_id or "(anonymous)")
-
+    with _threads_lock:
+        _active_threads[job_id] = threading.current_thread()
     try:
         # Immediately mark as running
         running_state = {
@@ -262,6 +265,9 @@ def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, 
         with _jobs_lock:
             _in_memory_jobs[job_id] = error_data
         _set_job(job_id, error_data)
+    finally:
+        with _threads_lock:
+            _active_threads.pop(job_id, None)
 
 
 def _start_pipeline_job(job_id: str, user_input: str, canton_environment: str, canton_url: str, party_id: str = ""):
@@ -441,11 +447,16 @@ async def health_check():
     except Exception as e:
         db_status = f"unavailable ({e})"
 
+    # Active pipeline threads
+    with _threads_lock:
+        active_pipelines = len(_active_threads)
+
     return HealthResponse(
         daml_sdk=daml_version,
         rag_status=rag_status,
         redis_status=redis_status,
         db_status=db_status,
+        active_pipelines=active_pipelines,
     )
 
 
@@ -501,7 +512,7 @@ async def system_status():
 
 @router.post("/init-rag")
 async def init_rag():
-    from config import get_settings
+    # Deferred: rag may not be installed in all environments
     from rag.vector_store import build_vector_store, get_store_stats
     settings = get_settings()
 

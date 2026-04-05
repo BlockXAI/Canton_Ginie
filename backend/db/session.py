@@ -65,8 +65,17 @@ def get_db_session():
 
 
 def init_db():
-    """Create all tables if they don't exist. Safe to call multiple times."""
+    """Create all tables if they don't exist.
+
+    Guarded by INIT_DB_TABLES env var to avoid conflicts with Alembic.
+    Defaults to "true" for sandbox/dev convenience.
+    In production, use `alembic upgrade head` instead and set INIT_DB_TABLES=false.
+    """
+    import os
+    if os.environ.get("INIT_DB_TABLES", "true").lower() in ("false", "0", "no"):
+        logger.info("Skipping create_all() — INIT_DB_TABLES=false (use Alembic migrations)")
+        return
     from db.models import Base
     engine = get_engine()
     Base.metadata.create_all(engine)
-    logger.info("Database tables initialized")
+    logger.info("Database tables initialized (set INIT_DB_TABLES=false to use Alembic only)")
