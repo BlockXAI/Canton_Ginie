@@ -61,3 +61,4 @@ class HealthResponse(BaseModel):
     rag_status: str
     redis_status: str
     db_status: str = "unknown"
+    active_pipelines: int = 0

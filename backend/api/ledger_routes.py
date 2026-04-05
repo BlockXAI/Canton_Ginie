@@ -5,6 +5,10 @@ Provides endpoints for verifying deployed contracts and inspecting ledger state,
 similar to Daml Navigator but native to the Ginie platform.
 """
 
+import os
+import json as _json
+import pathlib as _pathlib
+import tempfile
 import structlog
 import httpx
 from typing import Optional
@@ -41,15 +45,14 @@ def _canton_env() -> str:
     return get_settings().canton_environment
 
 
-def _fetch_all_party_ids() -> list[str]:
+async def _fetch_all_party_ids() -> list[str]:
     """Fetch all party identifiers from Canton (used for sandbox JWT)."""
     base = _canton_url()
-    # Bootstrap: use a wildcard JWT to call /v1/parties
     bootstrap_token = make_sandbox_jwt(["sandbox"])
     headers = {"Authorization": f"Bearer {bootstrap_token}", "Content-Type": "application/json"}
     try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.get(f"{base}/v1/parties", headers=headers)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{base}/v1/parties", headers=headers)
         if resp.status_code == 200:
             result = resp.json().get("result", [])
             return [p["identifier"] for p in result if p.get("identifier")]
@@ -58,15 +61,13 @@ def _fetch_all_party_ids() -> list[str]:
     return []
 
 
-def _auth_header(act_as: list[str] | None = None) -> dict:
+async def _auth_header(act_as: list[str] | None = None) -> dict:
     """Build auth header for Canton JSON API."""
-    import os
     env = _canton_env()
     if env == "sandbox":
-        # Use provided parties, or dynamically fetch real party identifiers
         parties = act_as
         if not parties:
-            parties = _fetch_all_party_ids()
+            parties = await _fetch_all_party_ids()
         if not parties:
             parties = ["sandbox"]
         token = make_sandbox_jwt(parties)
@@ -77,17 +78,17 @@ def _auth_header(act_as: list[str] | None = None) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _json_api_request(method: str, path: str, body: dict | None = None, params: dict | None = None) -> dict:
+async def _json_api_request(method: str, path: str, body: dict | None = None, params: dict | None = None) -> dict:
     """Make a request to the Canton JSON API."""
     url = f"{_canton_url()}{path}"
-    headers = {**_auth_header(), "Content-Type": "application/json"}
+    headers = {**await _auth_header(), "Content-Type": "application/json"}
 
     try:
-        with httpx.Client(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             if method == "GET":
-                resp = client.get(url, headers=headers, params=params)
+                resp = await client.get(url, headers=headers, params=params)
             else:
-                resp = client.post(url, headers=headers, json=body or {})
+                resp = await client.post(url, headers=headers, json=body or {})
     except httpx.ConnectError:
         raise HTTPException(
             status_code=503,
@@ -112,13 +113,13 @@ def _json_api_request(method: str, path: str, body: dict | None = None, params: 
 # ---------------------------------------------------------------------------
 
 @ledger_router.get("/parties")
-def list_parties():
+async def list_parties():
     """List all parties known to the ledger.
 
     Returns party identifiers, display names, and whether they are local.
     Similar to `daml ledger list-parties`.
     """
-    data = _json_api_request("GET", "/v1/parties")
+    data = await _json_api_request("GET", "/v1/parties")
     result = data.get("result", [])
 
     parties = []
@@ -141,10 +142,7 @@ def list_parties():
 # 2. List Contracts (query)
 # ---------------------------------------------------------------------------
 
-import json as _json
-import pathlib as _pathlib
-
-_TEMPLATE_CACHE_PATH = _pathlib.Path(__file__).resolve().parent.parent / ".template_cache.json"
+_TEMPLATE_CACHE_PATH = _pathlib.Path(tempfile.gettempdir()) / "ginie_template_cache.json"
 
 
 def _load_cached_template_ids() -> set[str]:
@@ -194,7 +192,7 @@ def _discover_template_ids() -> list[str]:
 
 
 @ledger_router.post("/contracts")
-def list_contracts(req: ContractQueryRequest = ContractQueryRequest()):
+async def list_contracts(req: ContractQueryRequest = ContractQueryRequest()):
     """Query active contracts on the ledger.
 
     Args:
@@ -216,7 +214,7 @@ def list_contracts(req: ContractQueryRequest = ContractQueryRequest()):
             return {"contracts": [], "count": 0, "environment": _canton_env()}
 
     url = f"{_canton_url()}/v1/query"
-    headers = {**_auth_header(act_as=act_as), "Content-Type": "application/json"}
+    headers = {**await _auth_header(act_as=act_as), "Content-Type": "application/json"}
 
     # Query in batches to avoid overloading (max 20 templates per request)
     all_contracts = []
@@ -226,8 +224,8 @@ def list_contracts(req: ContractQueryRequest = ContractQueryRequest()):
         body = {"templateIds": batch}
 
         try:
-            with httpx.Client(timeout=15.0) as client:
-                resp = client.post(url, headers=headers, json=body)
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, headers=headers, json=body)
         except httpx.ConnectError:
             raise HTTPException(status_code=503, detail="Canton JSON API not reachable")
         except httpx.TimeoutException:
@@ -263,7 +261,7 @@ def list_contracts(req: ContractQueryRequest = ContractQueryRequest()):
 # ---------------------------------------------------------------------------
 
 @ledger_router.post("/contracts/fetch")
-def fetch_contract(req: ContractFetchRequest):
+async def fetch_contract(req: ContractFetchRequest):
     """Fetch a specific contract by its ID.
 
     Args:
@@ -276,7 +274,7 @@ def fetch_contract(req: ContractFetchRequest):
     if template_id:
         body["templateId"] = template_id
 
-    data = _json_api_request("POST", "/v1/fetch", body=body)
+    data = await _json_api_request("POST", "/v1/fetch", body=body)
     result = data.get("result", {})
 
     if not result:
@@ -301,12 +299,12 @@ def fetch_contract(req: ContractFetchRequest):
 # ---------------------------------------------------------------------------
 
 @ledger_router.get("/packages")
-def list_packages():
+async def list_packages():
     """List all uploaded DAR packages on the ledger.
 
     Returns package IDs that have been uploaded to Canton.
     """
-    data = _json_api_request("GET", "/v1/packages")
+    data = await _json_api_request("GET", "/v1/packages")
     result = data.get("result", [])
 
     return {
@@ -321,10 +319,10 @@ def list_packages():
 # ---------------------------------------------------------------------------
 
 @ledger_router.get("/packages/{package_id}")
-def get_package_detail(package_id: str):
+async def get_package_detail(package_id: str):
     """Get details/status of a specific uploaded package."""
     try:
-        data = _json_api_request("GET", f"/v1/packages/{package_id}")
+        data = await _json_api_request("GET", f"/v1/packages/{package_id}")
         return {
             "package_id": package_id,
             "found": True,
@@ -342,7 +340,7 @@ def get_package_detail(package_id: str):
 # ---------------------------------------------------------------------------
 
 @ledger_router.post("/parties/allocate")
-def allocate_party(display_name: str, identifier_hint: str | None = None):
+async def allocate_party(display_name: str, identifier_hint: str | None = None):
     """Allocate a new party on the ledger.
 
     Args:
@@ -353,7 +351,7 @@ def allocate_party(display_name: str, identifier_hint: str | None = None):
     if identifier_hint:
         body["identifierHint"] = identifier_hint
 
-    data = _json_api_request("POST", "/v1/parties/allocate", body=body)
+    data = await _json_api_request("POST", "/v1/parties/allocate", body=body)
     result = data.get("result", {})
 
     return {
@@ -369,18 +367,18 @@ def allocate_party(display_name: str, identifier_hint: str | None = None):
 # ---------------------------------------------------------------------------
 
 @ledger_router.get("/status")
-def ledger_status():
+async def ledger_status():
     """Check Canton ledger connectivity and basic stats."""
     canton_url = _canton_url()
     env = _canton_env()
 
     # Check reachability
     try:
-        with httpx.Client(timeout=5.0) as client:
-            resp = client.post(
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
                 f"{canton_url}/v1/query",
                 content=b'{"templateIds":[]}',
-                headers={**_auth_header(), "Content-Type": "application/json"},
+                headers={**await _auth_header(), "Content-Type": "application/json"},
             )
             reachable = resp.status_code < 500
     except Exception:
@@ -396,14 +394,14 @@ def ledger_status():
 
     # Get party count
     try:
-        party_data = _json_api_request("GET", "/v1/parties")
+        party_data = await _json_api_request("GET", "/v1/parties")
         party_count = len(party_data.get("result", []))
     except Exception:
         party_count = -1
 
     # Get package count
     try:
-        pkg_data = _json_api_request("GET", "/v1/packages")
+        pkg_data = await _json_api_request("GET", "/v1/packages")
         package_count = len(pkg_data.get("result", []))
     except Exception:
         package_count = -1
@@ -422,7 +420,7 @@ def ledger_status():
 # ---------------------------------------------------------------------------
 
 @ledger_router.get("/verify/{contract_id}")
-def verify_contract(contract_id: str):
+async def verify_contract(contract_id: str):
     """Verify that a contract exists on the Canton ledger.
 
     Returns verification status and contract details if found.
@@ -434,7 +432,7 @@ def verify_contract(contract_id: str):
       Falls back to /v1/fetch with templateId when found via job store.
     """
     canton_url = _canton_url()
-    headers = {**_auth_header(), "Content-Type": "application/json"}
+    headers = {**await _auth_header(), "Content-Type": "application/json"}
 
     try:
         # Strategy 1: Look up the template_id for this contract from job store
@@ -445,10 +443,10 @@ def verify_contract(contract_id: str):
                 job_template_id = job_data.get("template_id", "")
                 break
 
-        with httpx.Client(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             # If we know the template, try /v1/fetch directly (fast path)
             if job_template_id:
-                resp = client.post(
+                resp = await client.post(
                     f"{canton_url}/v1/fetch",
                     headers=headers,
                     json={"contractId": contract_id, "templateId": job_template_id},
@@ -471,7 +469,7 @@ def verify_contract(contract_id: str):
             template_ids = _discover_template_ids()
             for tid in template_ids:
                 try:
-                    resp = client.post(
+                    resp = await client.post(
                         f"{canton_url}/v1/query",
                         headers=headers,
                         json={"templateIds": [tid]},
