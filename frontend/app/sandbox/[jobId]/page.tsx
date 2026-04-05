@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useJobStatus } from "@/lib/use-job-status";
 import {
   ArrowLeft,
   Loader2,
@@ -147,7 +148,7 @@ export default function SandboxPage() {
   const router = useRouter();
   const jobId = params.jobId as string;
 
-  const [status, setStatus] = useState<JobStatus | null>(null);
+  const { status, transport } = useJobStatus(jobId);
   const [result, setResult] = useState<JobResult | null>(null);
   const [activeTab, setActiveTab] = useState<"code" | "diagram" | "files">("code");
   const [showFindings, setShowFindings] = useState(false);
@@ -156,58 +157,44 @@ export default function SandboxPage() {
   const API_URL =
     process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
-  useEffect(() => {
+  const fetchResult = useCallback(async () => {
     if (!jobId) return;
+    try {
+      const response = await fetch(`${API_URL}/result/${jobId}`);
+      if (!response.ok) return;
 
-    const pollStatus = async () => {
-      try {
-        const response = await fetch(`${API_URL}/status/${jobId}`);
-        if (!response.ok) {
-          if (response.status === 404) {
-            router.push("/");
-          }
-          return;
-        }
+      const resultData: JobResult = await response.json();
+      setResult(resultData);
 
-        const statusData: JobStatus = await response.json();
-        setStatus(statusData);
-
-        if (
-          statusData.status === "complete" ||
-          statusData.status === "failed"
-        ) {
-          fetchResult();
-        } else {
-          setTimeout(pollStatus, 2000);
-        }
-      } catch (error) {
-        console.error("Polling error:", error);
-        setTimeout(pollStatus, 2000);
+      if (resultData.audit_reports?.json) {
+        try {
+          const parsed = JSON.parse(resultData.audit_reports.json);
+          const findings = parsed?.securityAudit?.report?.findings || [];
+          setAuditFindings(findings);
+        } catch { /* ignore parse errors */ }
       }
-    };
+    } catch (error) {
+      console.error("Error fetching result:", error);
+    }
+  }, [jobId, API_URL]);
 
-    const fetchResult = async () => {
-      try {
-        const response = await fetch(`${API_URL}/result/${jobId}`);
-        if (!response.ok) return;
+  useEffect(() => {
+    if (
+      status &&
+      (status.status === "complete" || status.status === "failed") &&
+      !result
+    ) {
+      fetchResult();
+    }
+  }, [status, result, fetchResult]);
 
-        const resultData: JobResult = await response.json();
-        setResult(resultData);
-
-        if (resultData.audit_reports?.json) {
-          try {
-            const parsed = JSON.parse(resultData.audit_reports.json);
-            const findings = parsed?.securityAudit?.report?.findings || [];
-            setAuditFindings(findings);
-          } catch { /* ignore parse errors */ }
-        }
-      } catch (error) {
-        console.error("Error fetching result:", error);
-      }
-    };
-
-    pollStatus();
-  }, [jobId, API_URL, router]);
+  useEffect(() => {
+    if (status?.status === "unknown") {
+      // Job not found — redirect home
+      const timer = setTimeout(() => router.push("/"), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [status, router]);
 
   const isProcessing =
     status?.status === "queued" || status?.status === "running";
@@ -237,8 +224,22 @@ export default function SandboxPage() {
                 ? "Deployment Failed"
                 : "Deploying Contract"}
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground font-mono">
+          <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground font-mono">
             Job {jobId.substring(0, 8)}...
+            {isProcessing && (
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                transport === "websocket"
+                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                  : transport === "polling"
+                    ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
+                    : "bg-muted text-muted-foreground"
+              }`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${
+                  transport === "websocket" ? "bg-green-500" : transport === "polling" ? "bg-yellow-500" : "bg-muted-foreground"
+                }`} />
+                {transport === "websocket" ? "Live" : transport === "polling" ? "Polling" : "Connecting"}
+              </span>
+            )}
           </p>
         </div>
 
