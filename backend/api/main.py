@@ -8,6 +8,7 @@ from api.routes import router
 from api.audit_routes import audit_router
 from api.auth_routes import auth_router as auth_api_router
 from api.ledger_routes import ledger_router
+from api.ws_routes import ws_router
 from api.rate_limiter import limiter, rate_limit_exceeded_handler
 from config import get_settings
 
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_api_router, prefix="/api/v1", tags=["auth"])
     app.include_router(audit_router, prefix="/api/v1", tags=["audit", "compliance"])
     app.include_router(ledger_router, prefix="/api/v1", tags=["ledger-explorer"])
+    app.include_router(ws_router, tags=["websocket"])
 
     return app
 

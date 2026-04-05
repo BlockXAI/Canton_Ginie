@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from datetime import datetime, timezone
 
 from api.rate_limiter import limiter
+from api.ws_routes import push_status_sync
 
 from api.models import (
     GenerateRequest,
@@ -185,6 +186,7 @@ def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, 
             with _jobs_lock:
                 _in_memory_jobs[jid] = {**_in_memory_jobs.get(jid, {}), **update}
             _set_job(jid, _in_memory_jobs[jid])
+            push_status_sync(jid, update)
             logger.info("[THREAD] Status update", job_id=jid, step=step, progress=progress)
 
         from pipeline.orchestrator import run_pipeline
@@ -250,6 +252,7 @@ def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, 
         with _jobs_lock:
             _in_memory_jobs[job_id] = result
         _set_job(job_id, result)
+        push_status_sync(job_id, result)
         logger.info("[THREAD] Pipeline completed", job_id=job_id, status=result["status"])
 
     except Exception as e:
@@ -265,6 +268,7 @@ def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, 
         with _jobs_lock:
             _in_memory_jobs[job_id] = error_data
         _set_job(job_id, error_data)
+        push_status_sync(job_id, error_data)
     finally:
         with _threads_lock:
             _active_threads.pop(job_id, None)
