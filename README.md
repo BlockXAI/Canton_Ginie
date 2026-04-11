@@ -1,190 +1,115 @@
-<div align="center">
-
 # Ginie
-### Plain English → Deployed Canton Smart Contract in only 90 Seconds
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+Natural language to deployed Canton smart contracts.
+
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Canton Network](https://img.shields.io/badge/Canton-Network-00C896?style=flat)](https://canton.network)
-[![License](https://img.shields.io/badge/License-Apache_2.0-gold?style=flat)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/BlockXAI/Canton_Ginie?color=gold&style=flat)](https://github.com/BlockXAI/Canton_Ginie/stargazers)
-
-**No Daml. No SDK knowledge. No blockchain engineering required.**
-
-[Live Demo](https://ginie-canton.vercel.app) · [Documentation](#quick-start) · [Canton Network](https://canton.network) · [BlockXAI](https://github.com/BlockXAI)
-
-</div>
+[![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-gold?style=flat)](LICENSE)
 
 ---
 
-## What is Ginie?
+## Overview
 
-Canton Network runs the world's most sophisticated institutional blockchain — $280B in daily repo settlement, $6T in tokenized assets, backed by Goldman Sachs, Broadridge, and Euroclear. Its smart contracts are written in **Daml**, a powerful but specialized functional language that takes months to learn.
+Ginie takes plain English contract descriptions and compiles them into deployed Daml contracts on Canton. The pipeline handles intent parsing, code generation, real SDK compilation, error correction, security auditing, and ledger deployment.
 
-**Ginie removes that barrier entirely.**
-
-Describe what you want in plain English. Ginie handles intent parsing, Daml generation, real SDK compilation, automatic error correction, and deployment to the Canton ledger — returning a live, verified contract ID in under 90 seconds.
 ```
-"Create a bond contract between an issuer and investor
- with a principal of $1M at 5% annual interest"
+Input:  "Bond contract between issuer and investor, $1M principal at 5% annual"
 
-→  contract_id: 0050e287c28a17a7100a5db4160fb47c...
-   package_id:  c6aa079b2bfd890db909a2a065c63f7b...
-   status:      deployed ✓  |  35s
+Output: contract_id: 0050e287c28a17a7100a5db4160fb47c...
+        package_id:  c6aa079b2bfd890db909a2a065c63f7b...
+        deployed in 35s
 ```
 
-A product manager, compliance officer, DeFi developer, or university student can now deploy production-grade Canton smart contracts — without ever writing a line of Daml.
+Useful for prototyping Canton workflows without learning Daml first, or for domain experts (compliance, legal, product) to generate working contract drafts.
 
 ---
 
-## Why Canton + Why Now
+## Why Canton
 
-Canton is not a typical blockchain. It is the settlement infrastructure for institutional finance:
-
-- **$280B** processed daily in repo agreements
-- **$6T** in tokenized assets under management
-- Partners: Goldman Sachs · Broadridge · Euroclear · Tradeweb · Nasdaq · JPMorgan
-- DTCC treasury tokenization pilot underway (H1 2026)
-- JPM Coin native integration rolling out throughout 2026
-
-The bottleneck is not institutional interest. It is developer supply. Daml's learning curve keeps thousands of potential Canton builders on the sidelines. **Ginie is the onramp.**
+Canton is the settlement layer for institutional finance — repo agreements, tokenized assets, custody. The contracts are written in Daml, which has a steep learning curve. This tool lowers that barrier for exploration and prototyping.
 
 ---
 
 ## How It Works
 
-Ginie runs a verified 8-stage agentic pipeline with enterprise-grade security and compliance validation. Every contract passes all stages — no shortcuts, no mocks.
+Eight-stage pipeline: intent parsing, RAG retrieval, code generation, compilation, error fixing, security audit, diagram generation, and deployment.
 
 ```
-User Input (Natural Language)
-       │
-       ▼
- ┌─────────────┐
- │ Intent Agent│  ← Parses English → structured contract specification (JSON)
- └──────┬──────┘
+English Description
         │
         ▼
- ┌─────────────┐
- │  RAG Layer  │  ← ChromaDB retrieves matching Daml patterns from 500+ verified examples
- └──────┬──────┘
+   Intent Agent        Parse to structured JSON spec
         │
         ▼
- ┌─────────────┐
- │ Writer Agent│  ← Generates complete, idiomatic Daml module
- └──────┬──────┘
+   RAG Retrieval       Match against 500+ Daml examples (ChromaDB)
         │
         ▼
- ┌──────────────┐
- │Compile Agent │  ← Runs real `daml build` SDK — captures errors precisely
- └──────┬───────┘
-        │
-   [compile error?]
+   Writer Agent        Generate complete Daml module
         │
         ▼
- ┌─────────────┐
- │  Fix Agent  │  ← LangGraph loop: reads error, rewrites, retries (max 3×)
- │   (Loop)    │    Handles all 11 known Daml error types. Never terminates on failure.
- └──────┬──────┘
+   Compile Agent       Run `daml build`, capture errors
+        │
+        ├── [errors?] ──► Fix Agent (retry up to 3x)
         │
         ▼
- ┌──────────────────┐
- │ Security Auditor │  ← Hybrid LLM + static analysis (DSV, SWC, CWE, OWASP)
- │ + Compliance     │    6 frameworks: NIST 800-53, SOC2, ISO27001, DeFi, Canton DLT
- └──────┬───────────┘
-        │
-        ▼ [deploy gate check]
-        │
- ┌──────────────┐
- │ Deploy Agent │  ← DAR upload · party allocation · JWT regen · ledger verification
- └──────┬───────┘
+   Security Audit      Hybrid LLM + static analysis
         │
         ▼
- ┌─────────────────────────────────────────────────┐
- │  contract_id + package_id + security_score      │  ← Real Canton ledger
- │  compliance_score + audit_reports + deploy_gate │    Verifiable on CantonScan
- └─────────────────────────────────────────────────┘
+   Deploy Gate         Block if critical vulnerabilities found
+        │
+        ▼
+   Deploy Agent        DAR upload, party allocation, contract creation
+        │
+        ▼
+   contract_id + package_id + audit scores
 ```
 
-### Enterprise Security & Compliance Layer
+### Security Layer
 
-Every generated contract passes through a **Hybrid Security Auditor** combining:
-- **LLM Deep Analysis**: Context-aware vulnerability detection (DSV-001 through DSV-015, SWC, CWE, OWASP SC-10)
-- **Static Analysis**: Pattern matching for missing signatories, unsafe controllers, unbounded collections
-- **Compliance Engine**: Multi-framework validation (NIST 800-53 Rev 5, SOC 2 Type II, ISO 27001, DeFi Security, Canton DLT Standards)
+Contracts pass through a hybrid auditor before deployment:
+- LLM analysis for context-aware vulnerability detection (DSV, SWC, CWE, OWASP)
+- Static pattern matching for common Daml issues (missing signatories, unsafe controllers)
+- Compliance checks against NIST 800-53, SOC 2, ISO 27001, and Canton-specific standards
 
-**Deploy Gate**: Contracts scoring below security/compliance thresholds are flagged but still deployed (with warnings) for developer review. Production deployments can enforce hard gates.
+The deploy gate blocks contracts with critical vulnerabilities. Lower-severity findings are reported but don't block.
 
 ---
 
 ## Use Cases
 
-### Institutional Finance
-Deploy production-grade Canton contracts without a Daml engineering team:
-- **Bond issuance** — issuer/investor relationships, coupon schedules, settlement terms
-- **Repo agreements** — collateral, repurchase obligations, margin calls
-- **Custody contracts** — asset custody, transfer authorization, regulatory reporting hooks
-- **RWA tokenization** — real-world asset representation, transfer restrictions, compliance gates
+**Institutional Finance** — Bond issuance, repo agreements, custody, RWA tokenization. Generate working contract drafts without a Daml team.
 
-### DeFi & Digital Assets
-Build privacy-preserving financial applications on institutional rails:
-- **Escrow contracts** — multi-party hold and release with conditional triggers
-- **Option contracts** — European/American options with exercise mechanics
-- **Payment flows** — multi-party payment with atomic settlement guarantees
-- **NFT and token standards** — CNTS-compliant digital asset contracts
+**DeFi & Digital Assets** — Escrow, options, multi-party payments, tokenized securities. Privacy-preserving finance on institutional rails.
 
-### Enterprise & Compliance
-Enable domain experts to prototype Canton workflows directly:
-- Compliance officers drafting KYC attestation and audit trail contracts
-- Product managers prototyping settlement flows before engineering engagement
-- Legal teams encoding agreement terms into verifiable on-chain logic
-- Regulators building supervisory access contracts on Canton's privacy model
+**Enterprise Prototyping** — Compliance officers, product managers, and legal teams can draft Canton workflows directly, before engineering engagement.
 
-### Education & Research
-The fastest path for developers to learn Canton by doing:
-- Deploy a live Canton contract in under 20 minutes, no prior Daml knowledge
-- Explore the generated Daml code to learn by example
-- Iterate on contracts conversationally — modify and redeploy from results page
-- Full audit trail of every compilation attempt for learning from errors
+**Learning** — Deploy a live contract in minutes to understand how Canton and Daml work. Iterate on the generated code to learn by example.
 
 ---
 
-## Production Audit Results
+## Testing
 
-Ginie has passed a full production readiness audit:
+The system has been tested end-to-end across the full pipeline:
 
-| Component | Status | Notes |
-|---|---|---|
-| Daml Sandbox | ✅ Green | Isolated per job UUID, path traversal blocked |
-| Compile Agent | ✅ Green | `sanitize_daml` preserves valid code, module header enforced |
-| Fix Agent | ✅ Green | Handles all 11 error types, fallback after 3 attempts |
-| Security Auditor | ✅ Green | Hybrid LLM + static analysis, 15 DSV checks, 6 compliance profiles |
-| Compliance Engine | ✅ Green | NIST 800-53, SOC2, ISO27001, DeFi, Canton DLT frameworks |
-| Pipeline | ✅ Green | Never terminates on compile failure — fallback → compile → deploy |
-| Canton Deploy | ✅ Green | DAR upload, party allocation, JWT regen, ledger verification |
-| API Stability | ✅ Green | Thread-based execution, no stuck jobs |
-| Frontend | ✅ Green | Progress UI, security dashboard, audit reports, contract display |
-| SDK | ✅ Green | 16/16 tests passed, Python 3.10+, programmatic access |
-| Security | ✅ Green | No injection vulnerabilities, keys gitignored |
+- Compilation: real `daml build` execution, error capture and retry
+- Security audit: hybrid LLM + static analysis, 15 vulnerability checks
+- Compliance: NIST 800-53, SOC2, ISO27001 validation
+- Deployment: DAR upload, party allocation, contract creation, ledger verification
+- Concurrency: multiple simultaneous jobs without blocking
 
-**Benchmark:** 5/5 end-to-end success · 0 fallbacks needed · ~35s average · 3/3 concurrent jobs ✓  
-**Security:** Average security score 78/100 · compliance score 85/100 · 0 critical vulnerabilities
+Typical run: ~35 seconds from prompt to deployed contract.
 
 ---
 
 ## Stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **AI Orchestration** | LangChain + LangGraph | Stateful multi-agent loop with supervisor |
-| **LLM** | Anthropic Claude (primary) · Gemini 2.0 · GPT-4o | Intent parsing, Daml generation, error fixing |
-| **RAG** | ChromaDB + SentenceTransformers | 500+ curated Daml pattern retrieval |
-| **Security & Compliance** | Hybrid LLM + Static Analysis | DSV/SWC/CWE/OWASP checks + 6 compliance frameworks |
-| **Smart Contract Runtime** | Daml SDK 2.10.3 | Real `daml build` + `daml ledger upload-dar` |
-| **Backend** | FastAPI + Celery + Redis | Async pipeline, job queue, state management |
-| **Frontend** | Next.js 15 + TailwindCSS | Live progress, security dashboard, iterate UI |
-| **Ledger** | Canton HTTP Ledger API v1 | Party allocation, DAR upload, contract creation |
-| **SDK** | Python 3.10+ (httpx) | Programmatic API client with 11 methods |
-| **Deployment** | Docker + GitHub Actions | Containerized CI/CD, self-hostable |
+- **Backend**: FastAPI, LangGraph, Redis
+- **LLM**: Claude (primary), GPT-4o, Gemini 2.0
+- **RAG**: ChromaDB with 500+ Daml examples
+- **Compilation**: Daml SDK 2.10.3
+- **Frontend**: Next.js 15, TailwindCSS
+- **Ledger**: Canton HTTP JSON API
 
 ---
 
@@ -400,15 +325,11 @@ Canton_Ginie/
 
 ## Python SDK
 
-Ginie provides a production-ready Python SDK for programmatic access to the platform.
+Programmatic access to the Ginie platform.
 
 ### Installation
 ```bash
-# From project root
-pip install -e .
-
-# Or direct dependency
-pip install httpx
+pip install -e ./sdk
 ```
 
 ### Quick Start
@@ -457,10 +378,7 @@ python -m sdk.examples.full_pipeline
 
 ### SDK Tests
 ```bash
-# Run all tests (unit + integration)
 python -m sdk.tests.test_sdk
-
-# Result: 16/16 PASSED ✅
 ```
 
 Full SDK documentation: [`sdk/README.md`](sdk/README.md)
@@ -502,39 +420,23 @@ docker compose up --build
 
 ## Contributing
 
-Contributions are welcome. The most impactful areas:
+PRs welcome. Useful areas:
+- Daml examples in `backend/rag/daml_examples/`
+- Fix agent error type coverage
+- New contract verticals (insurance, trade finance)
 
-- **Daml examples** — add verified contract patterns to `backend/rag/daml_examples/`
-- **Fix agent** — expand error type coverage beyond the current 11 handled types
-- **Contract types** — new industry verticals (insurance, trade finance, structured products)
-- **LLM adapters** — additional model backends in `backend/agents/`
-
-Please open an issue before submitting large PRs.
+Open an issue first for large changes.
 
 ---
 
-## Canton Network Resources
+## Resources
 
-- [Canton Developer Docs](https://docs.dev.sync.global/)
-- [Daml Language Reference](https://docs.daml.com/)
-- [Canton Network Explorer](https://cantonscan.com/)
-- [Canton SDK Quickstart](https://github.com/digital-asset/cn-quickstart)
-- [Global Synchronizer Foundation](https://canton.foundation/)
+- [Canton Docs](https://docs.dev.sync.global/)
+- [Daml Reference](https://docs.daml.com/)
+- [Canton Explorer](https://cantonscan.com/)
 
 ---
 
-## Built By
+## License
 
-**BlockXAI** — building AI infrastructure for institutional blockchain.
-
-[github.com/BlockXAI](https://github.com/BlockXAI)
-
----
-
-<div align="center">
-
-**Apache 2.0 Licensed · Built on Canton Network · Open Source**
-
-*If you can describe it, Ginie can deploy it on Canton.*
-
-</div>
+Apache 2.0. Built by [BlockXAI](https://github.com/BlockX-AI).
