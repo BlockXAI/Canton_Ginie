@@ -23,18 +23,18 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
 
     redis_url: str = "redis://localhost:6379/0"
-    database_url: str = "postgresql://postgres:password@localhost:5432/ginie_daml"
+    database_url: str = ""
 
     # Canton sandbox PostgreSQL storage (separate DB from Ginie app)
     canton_db_host: str = "localhost"
     canton_db_port: int = 5432
     canton_db_name: str = "canton_sandbox"
-    canton_db_user: str = "postgres"
-    canton_db_password: str = "password"
+    canton_db_user: str = ""
+    canton_db_password: str = ""
 
     canton_sandbox_url: str = "http://localhost:7575"
-    canton_devnet_url: str = "https://canton.network/ledger"
-    canton_mainnet_url: str = "https://main.canton.network/ledger"
+    canton_devnet_url: str = ""
+    canton_mainnet_url: str = ""
     canton_environment: str = "sandbox"
     canton_token: str = ""
 
