@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.env.ginie
+.template_cache.json
+ginie_jobs/
+rag/chroma_db/
+rag/test_chroma/
+tests/
+scripts/

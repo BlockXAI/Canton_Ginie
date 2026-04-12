@@ -1,12 +1,13 @@
-# docker-compose.yml — Local dev stack for Ginie Canton
+# docker-compose.yml — Ginie Canton local dev stack
 #
 # Usage:
-#   docker-compose up -d        # Start Postgres + Redis
-#   docker-compose down          # Stop
-#   docker-compose down -v       # Stop + delete data volumes
+#   docker compose up -d              # Start all services
+#   docker compose up -d postgres redis  # Infra only (run backend locally)
+#   docker compose down                # Stop
+#   docker compose down -v             # Stop + delete data volumes
 #
-# Canton sandbox runs OUTSIDE Docker (via `daml sandbox` or Canton binary)
-# because it needs access to local DAML SDK and project files.
+# Canton sandbox runs OUTSIDE Docker (needs local Daml SDK).
+# Start it separately: ./scripts/start-canton-sandbox.ps1
 
 services:
   postgres:
@@ -15,8 +16,8 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_PASSWORD: password
-      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${CANTON_DB_PASSWORD:-password}
+      POSTGRES_USER: ${CANTON_DB_USER:-postgres}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/scripts/init_databases.sh:/docker-entrypoint-initdb.d/00-init-databases.sh
@@ -39,6 +40,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ginie-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env.ginie
+    environment:
+      DATABASE_URL: postgresql://${CANTON_DB_USER:-postgres}:${CANTON_DB_PASSWORD:-password}@postgres:5432/ginie_daml
+      REDIS_URL: redis://redis:6379/0
+      CANTON_SANDBOX_URL: http://host.docker.internal:7575
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   pgdata:
