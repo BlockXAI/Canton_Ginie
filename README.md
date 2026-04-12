@@ -2,9 +2,7 @@
 
 Natural language to deployed Canton smart contracts.
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![Canton Network](https://img.shields.io/badge/Canton-Network-00C896?style=flat)](https://canton.network)
+[![CI](https://github.com/BlockX-AI/Canton_Ginie/actions/workflows/ci.yml/badge.svg)](https://github.com/BlockX-AI/Canton_Ginie/actions/workflows/ci.yml)
 [![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-gold?style=flat)](LICENSE)
 
 ---
@@ -106,8 +104,8 @@ Typical run: ~35 seconds from prompt to deployed contract.
 
 - **Backend**: FastAPI, LangGraph, Redis
 - **LLM**: Claude (primary), GPT-4o, Gemini 2.0
-- **RAG**: ChromaDB with 500+ Daml examples
-- **Compilation**: Daml SDK 2.10.3
+- **RAG**: ChromaDB with curated Daml examples
+- **Compilation**: Daml SDK 2.10.4
 - **Frontend**: Next.js 15, TailwindCSS
 - **Ledger**: Canton HTTP JSON API
 
@@ -137,8 +135,8 @@ source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Configure environment
-cp .env.example .env
-# Edit .env — set your Anthropic API key and Canton environment
+cp .env.ginie.example .env.ginie
+# Edit .env.ginie — set at least one LLM API key
 
 # Start API server
 python -m api.main
@@ -246,7 +244,7 @@ Set `CANTON_ENVIRONMENT=devnet` in `.env` to target DevNet. Contract IDs deploye
 
 ## Contract Types Supported
 
-Ginie's RAG library and Writer Agent cover the full range of Canton contract patterns:
+Ginie's RAG library and Writer Agent cover common Canton contract patterns:
 
 | Category | Examples |
 |---|---|
@@ -294,6 +292,8 @@ Canton_Ginie/
 │   ├── utils/
 │   │   ├── daml_utils.py        # Daml SDK integration utilities
 │   │   └── canton_client.py     # Canton HTTP Ledger API client
+│   ├── canton/
+│   │   └── canton_client_v2.py  # V1/V2 dual API support + OAuth2
 │   └── config.py                # Pydantic settings + environment management
 ├── frontend/
 │   ├── app/
@@ -315,9 +315,10 @@ Canton_Ginie/
 │   ├── setup.py                 # pip installable package
 │   └── README.md                # SDK documentation
 ├── scripts/
-│   ├── audit_report.txt         # Production readiness audit results
-│   └── enterprise_audit_test.py # Full system validation (E2E + security)
-├── rag/chroma_db/               # Persisted vector store
+│   └── start-canton-sandbox.ps1 # Local Canton sandbox launcher
+├── schemas/
+│   └── idl-spec.json            # Canonical IDL schema (M2 architecture)
+├── rag/chroma_db/               # Persisted vector store (gitignored, rebuilt via /api/v1/init-rag)
 └── canton-sandbox.conf          # Local Canton sandbox configuration
 ```
 
@@ -408,24 +409,17 @@ CELERY_BROKER_URL=redis://localhost:6379/0
 
 ## Self-Hosting with Docker
 ```bash
-# Build and run the full stack
-docker compose up --build
+# Start Postgres + Redis (Canton sandbox runs locally)
+docker compose up -d
 
-# Backend API:  http://localhost:8000
-# Frontend:     http://localhost:3000
-# Redis:        localhost:6379
+# Then start backend and frontend separately (see Quick Start above)
 ```
 
 ---
 
 ## Contributing
 
-PRs welcome. Useful areas:
-- Daml examples in `backend/rag/daml_examples/`
-- Fix agent error type coverage
-- New contract verticals (insurance, trade finance)
-
-Open an issue first for large changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome — open an issue first for large changes.
 
 ---
 
