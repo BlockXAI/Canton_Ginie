@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability, please report it privately:
 
-- **Email**: security@blockxai.org
+- **Email**: TBA
 - **Do not** open a public GitHub issue for security vulnerabilities.
 
 We will acknowledge receipt within 48 hours and provide a timeline for a fix.
