@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ginie IDL Specification",
+  "description": "Canonical interface definition shared between backend pipeline, IDL extractor (M2), and frontend agent (M2). All agents MUST consume and produce data conforming to these schemas.",
+  "version": "0.1.0",
+  "definitions": {
+    "StructuredIntent": {
+      "type": "object",
+      "description": "Output of the Intent Agent — structured representation of a user prompt.",
+      "required": ["contract_type", "parties", "daml_templates_needed"],
+      "properties": {
+        "contract_type": {
+          "type": "string",
+          "description": "Canonical contract category (e.g. bond, escrow, custody, swap)."
+        },
+        "parties": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Named roles in the contract (e.g. ['issuer', 'investor'])."
+        },
+        "daml_templates_needed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Daml template names the Writer Agent should generate."
+        },
+        "key_terms": {
+          "type": "object",
+          "description": "Domain-specific parameters extracted from the prompt.",
+          "additionalProperties": true
+        },
+        "choices": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Contract choices/actions (e.g. ['Transfer', 'Accept', 'Reject'])."
+        }
+      }
+    },
+
+    "GenerateRequest": {
+      "type": "object",
+      "required": ["prompt"],
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "minLength": 10,
+          "description": "Plain-English description of the Canton contract."
+        },
+        "canton_environment": {
+          "type": "string",
+          "enum": ["sandbox", "devnet", "mainnet"],
+          "default": "sandbox"
+        },
+        "canton_url": {
+          "type": ["string", "null"],
+          "description": "Override Canton node URL."
+        }
+      }
+    },
+
+    "JobStatus": {
+      "type": "object",
+      "required": ["job_id", "status", "current_step", "progress"],
+      "properties": {
+        "job_id": { "type": "string", "format": "uuid" },
+        "status": {
+          "type": "string",
+          "enum": ["queued", "running", "complete", "failed"]
+        },
+        "current_step": {
+          "type": "string",
+          "enum": [
+            "intent", "rag", "generate", "compile", "fix",
+            "audit", "diagram", "deploy", "complete", "failed"
+          ]
+        },
+        "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "updated_at": { "type": ["string", "null"], "format": "date-time" },
+        "error_message": { "type": ["string", "null"] }
+      }
+    },
+
+    "JobResult": {
+      "type": "object",
+      "required": ["job_id", "status"],
+      "properties": {
+        "job_id": { "type": "string" },
+        "status": { "type": "string" },
+        "success": { "type": ["boolean", "null"] },
+        "contract_id": { "type": ["string", "null"] },
+        "package_id": { "type": ["string", "null"] },
+        "template": { "type": ["string", "null"] },
+        "fallback_used": { "type": ["boolean", "null"] },
+        "explorer_link": { "type": ["string", "null"] },
+        "generated_code": { "type": ["string", "null"] },
+        "structured_intent": { "$ref": "#/definitions/StructuredIntent" },
+        "attempt_number": { "type": ["integer", "null"] },
+        "security_score": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "compliance_score": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "enterprise_score": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "deploy_gate": { "type": ["boolean", "null"] },
+        "diagram_mermaid": { "type": ["string", "null"] },
+        "project_files": { "type": ["object", "null"] }
+      }
+    },
+
+    "AuditRequest": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "minLength": 10 },
+        "contract_name": { "type": "string", "default": "Contract" },
+        "compliance_profile": {
+          "type": "string",
+          "enum": ["generic", "nist-800-53", "soc2-type2", "iso27001", "defi-security", "canton-dlt"],
+          "default": "generic"
+        },
+        "skip_compliance": { "type": "boolean", "default": false },
+        "skip_audit": { "type": "boolean", "default": false }
+      }
+    },
+
+    "AuditResult": {
+      "type": "object",
+      "required": ["success"],
+      "properties": {
+        "success": { "type": "boolean" },
+        "security_score": { "type": ["integer", "null"] },
+        "compliance_score": { "type": ["integer", "null"] },
+        "enterprise_score": { "type": ["number", "null"] },
+        "deploy_gate": { "type": ["boolean", "null"] },
+        "findings_count": { "type": ["integer", "null"] },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+
+    "IDLExtractorOutput": {
+      "type": "object",
+      "description": "M2: Output of the IDL Extractor agent — machine-readable contract interface.",
+      "required": ["module_name", "templates"],
+      "properties": {
+        "module_name": { "type": "string" },
+        "sdk_version": { "type": "string" },
+        "templates": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TemplateIDL" }
+        }
+      }
+    },
+
+    "TemplateIDL": {
+      "type": "object",
+      "required": ["name", "signatories", "fields", "choices"],
+      "properties": {
+        "name": { "type": "string" },
+        "signatories": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "observers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" },
+              "optional": { "type": "boolean", "default": false }
+            }
+          }
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "controller"],
+            "properties": {
+              "name": { "type": "string" },
+              "controller": { "type": "string" },
+              "params": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "type": { "type": "string" }
+                  }
+                }
+              },
+              "returns": { "type": "string", "default": "()" }
+            }
+          }
+        }
+      }
+    },
+
+    "FrontendAgentInput": {
+      "type": "object",
+      "description": "M2: Input to the Frontend Agent — IDL + metadata needed to generate UI.",
+      "required": ["idl", "job_result"],
+      "properties": {
+        "idl": { "$ref": "#/definitions/IDLExtractorOutput" },
+        "job_result": { "$ref": "#/definitions/JobResult" }
+      }
+    }
+  }
+}
