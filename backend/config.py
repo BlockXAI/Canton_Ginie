@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
-    api_port: int = 8000
+    api_port: int = int(os.getenv("PORT", "8000"))
 
     max_fix_attempts: int = 3
     llm_model: str = "gpt-4o"
