@@ -490,9 +490,14 @@ def error_node(state: dict) -> dict:
     }
 
 
-def _route_after_compile(state: dict) -> Literal["audit", "fix", "fallback"]:
+def _route_after_compile(state: dict) -> Literal["audit", "fix", "fallback", "error"]:
     if state.get("compile_success"):
         return "audit"
+
+    # If we already used fallback and it still fails, give up
+    if state.get("fallback_used"):
+        logger.error("Fallback contract also failed to compile", job_id=state.get("job_id"))
+        return "error"
 
     attempt = state.get("attempt_number", 0)
 
@@ -549,7 +554,7 @@ def _build_pipeline() -> CompiledStateGraph:
     graph.add_conditional_edges(
         "compile",
         _route_after_compile,
-        {"audit": "audit", "fix": "fix", "fallback": "fallback"},
+        {"audit": "audit", "fix": "fix", "fallback": "fallback", "error": "error"},
     )
     graph.add_edge("fix", "compile")
     graph.add_edge("fallback", "compile")  # recompile after fallback — guaranteed success
@@ -610,7 +615,7 @@ def run_pipeline(job_id: str, user_input: str, canton_environment: str = "sandbo
 
     try:
         pipeline = build_pipeline()
-        final_state = pipeline.invoke(initial_state)
+        final_state = pipeline.invoke(initial_state, {"recursion_limit": 50})
     finally:
         # Always cleanup the callback
         _status_callbacks.pop(job_id, None)

@@ -1,0 +1,16 @@
+// Bootstrap script: connect participant1 to the local domain
+// This runs automatically after Canton daemon starts
+//
+// All participant tables are dropped before Canton starts (see entrypoint.sh),
+// so the participant always starts fresh with no stale domain registrations.
+// This eliminates DOMAIN_ALIAS_DUPLICATION entirely.
+
+logger.info("Connecting participant1 to local domain...")
+participant1.domains.connect_local(local)
+
+// Wait until the participant is active on the domain
+utils.retry_until_true {
+  participant1.domains.active("local")
+}
+
+logger.info("Bootstrap complete: participant1 connected to local domain")

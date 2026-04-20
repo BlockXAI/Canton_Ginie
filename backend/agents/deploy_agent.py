@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import uuid
 import zipfile
 import structlog
@@ -80,6 +81,49 @@ def _upload_dar(client: httpx.Client, canton_url: str, dar_bytes: bytes, auth: d
         return pkg
     # No usable package ID from upload response
     return ""
+
+
+def _wait_for_package_vetting(
+    client: httpx.Client,
+    canton_url: str,
+    package_id: str,
+    auth: dict,
+    max_attempts: int = 10,
+    delay: float = 2.0,
+) -> bool:
+    """Poll GET /v1/packages until the uploaded package is visible on the ledger.
+
+    Canton vets packages automatically on upload but the topology transaction
+    needs a short time to propagate to the domain.  If we create a contract
+    before vetting completes we get NO_DOMAIN_FOR_SUBMISSION.
+    """
+    if not package_id:
+        # No package ID to check — just do a fixed wait
+        logger.warning("No package ID available, using fixed delay for vetting")
+        time.sleep(5.0)
+        return True
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = client.get(
+                f"{canton_url}/v1/packages",
+                headers={**auth, "Content-Type": "application/json"},
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                packages = data.get("result", [])
+                if package_id in packages:
+                    logger.info("Package vetting confirmed", package_id=package_id[:16], attempt=attempt)
+                    return True
+        except Exception as exc:
+            logger.warning("Package vetting check failed", attempt=attempt, error=str(exc))
+
+        logger.info("Waiting for package vetting", package_id=package_id[:16], attempt=attempt, max=max_attempts)
+        time.sleep(delay)
+
+    logger.warning("Package vetting not confirmed after retries, proceeding anyway", package_id=package_id[:16])
+    return False
 
 
 def _sanitize_identifier_hint(name: str) -> str:
@@ -202,6 +246,9 @@ def run_deploy_agent(
             upload_package_id = _upload_dar(client, canton_url, dar_bytes, auth)
             package_id = upload_package_id or manifest_package_id
             logger.info("DAR uploaded", package_id=package_id, source="upload" if upload_package_id else "manifest")
+
+            # Step 2b: Wait for package vetting to propagate to domain
+            _wait_for_package_vetting(client, canton_url, package_id, auth)
 
             # Step 3: Allocate parties
             # If authenticated user has a party_id, use it as primary signatory

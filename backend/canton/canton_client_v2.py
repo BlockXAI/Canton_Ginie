@@ -27,7 +27,7 @@ def make_sandbox_jwt(act_as: list[str], read_as: list[str] | None = None) -> str
     header = _b64url(json.dumps({"alg": "none", "typ": "JWT"}, separators=(",", ":")))
     payload = _b64url(json.dumps({
         "sub": "ginie-sandbox",
-        "ledgerId": "sandbox",
+        "ledgerId": "participant1",
         "applicationId": "ginie-daml",
         "actAs": act_as,
         "readAs": read_as or act_as,
