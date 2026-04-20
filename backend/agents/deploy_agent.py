@@ -569,18 +569,16 @@ def _extract_ensure_numeric_values(daml_code: str, template_name: str | None = N
         return hints
 
     ensure_text = m.group(1)
-    # Match exact equality:  fieldName == 100.0  or  fieldName == 50
+    # Match exact equality ONLY:  fieldName == 100.0  or  fieldName == 50
+    # We intentionally skip > / >= constraints because the default payload
+    # values (e.g. 1000.0 for Decimal) already satisfy them.  Extracting
+    # the bound (e.g. 0.0 from "amount > 0.0") would set the field to
+    # exactly the bound, which violates strict ">" checks.
     for field_match in re.finditer(r'(\w+)\s*==\s*([0-9]+(?:\.[0-9]+)?)', ensure_text):
         fname = field_match.group(1)
         fval = field_match.group(2)
         if fname not in hints:
             hints[fname] = fval
-    # Match greater-than constraints:  amount > 0  or  amount >= 1.0
-    # Store as minimum bounds (prefix with ">") so _build_payload can use them
-    for field_match in re.finditer(r'(\w+)\s*>=?\s*([0-9]+(?:\.[0-9]+)?)', ensure_text):
-        fname = field_match.group(1)
-        if fname not in hints:
-            hints[fname] = field_match.group(2)
     logger.info("Ensure numeric hints extracted", hints=hints)
     return hints
 
