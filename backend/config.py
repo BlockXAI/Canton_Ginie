@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     jwt_expiry_days: int = 7
 
     # CORS
-    cors_origins: str = "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,https://canton.ginie.xyz"
+    cors_origins: str = "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,https://canton.ginie.xyz,https://*.vercel.app"
 
     def get_canton_url(self) -> str:
         mapping = {
