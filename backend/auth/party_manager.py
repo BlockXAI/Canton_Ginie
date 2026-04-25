@@ -100,6 +100,42 @@ def get_party(party_id: str) -> Optional[dict]:
     return None
 
 
+def get_party_by_fingerprint(fingerprint: str, canton_env: Optional[str] = None) -> Optional[dict]:
+    """Retrieve a registered party by its public-key fingerprint.
+
+    Used for session recovery — a returning user presents their key file,
+    and we look up the party they previously allocated on Canton.
+
+    Args:
+        fingerprint: Public-key fingerprint (e.g. "1220abc...").
+        canton_env: Optional filter by environment; if provided only parties
+                    in that environment are returned.
+
+    Returns:
+        Party dict or None if not found.
+    """
+    try:
+        from db.session import get_db_session
+        from db.models import RegisteredParty
+
+        with get_db_session() as session:
+            query = session.query(RegisteredParty).filter_by(public_key_fp=fingerprint)
+            if canton_env:
+                query = query.filter_by(canton_env=canton_env)
+            party = query.order_by(RegisteredParty.created_at.desc()).first()
+            if party:
+                return {
+                    "party_id": party.party_id,
+                    "display_name": party.display_name,
+                    "fingerprint": party.public_key_fp,
+                    "canton_env": party.canton_env,
+                    "created_at": party.created_at.isoformat() if party.created_at else None,
+                }
+    except Exception as e:
+        logger.warning("Failed to query party by fingerprint", fingerprint=fingerprint[:16], error=str(e))
+    return None
+
+
 def list_parties(canton_env: Optional[str] = None) -> list[dict]:
     """List all registered parties, optionally filtered by environment.
 

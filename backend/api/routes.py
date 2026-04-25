@@ -1,10 +1,13 @@
 import os
+import io
 import uuid
 import json
+import zipfile
 import threading
 import structlog
 import redis
 from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from datetime import datetime, timezone
 
 from api.rate_limiter import limiter
@@ -118,8 +121,9 @@ def _save_deployed_contract(job_id: str, deploy_result: dict):
                 package_id=deploy_result.get("package_id", ""),
                 template_id=deploy_result.get("template_id", ""),
                 job_id=job_id,
-                party_id=None,
-                canton_env=deploy_result.get("environment", "sandbox"),
+                party_id=deploy_result.get("party_id") or None,
+                dar_path=deploy_result.get("dar_path", "") or None,
+                canton_env=deploy_result.get("environment") or deploy_result.get("canton_environment", "sandbox"),
                 explorer_link=deploy_result.get("explorer_link", ""),
             )
             session.add(contract)
@@ -215,6 +219,7 @@ def _run_pipeline_thread(job_id: str, user_input: str, canton_environment: str, 
                 "parties":           final_state.get("parties", {}),
                 "fallback_used":     final_state.get("fallback_used", False),
                 "explorer_link":     final_state.get("explorer_link"),
+                "dar_path":          final_state.get("dar_path", ""),
                 "generated_code":    final_state.get("generated_code"),
                 "structured_intent": final_state.get("structured_intent"),
                 "attempt_number":    final_state.get("attempt_number"),
@@ -420,6 +425,130 @@ Please update the contract to incorporate the requested changes while keeping th
     )
 
     return GenerateResponse(job_id=new_job_id, message="Iteration job queued")
+
+
+def _resolve_dar_path(job_id: str) -> str:
+    """Locate a compiled DAR file for a given job.
+
+    Resolution order:
+      1. dar_path stored on the DeployedContract row.
+      2. dar_path cached in the job result JSON.
+      3. Filesystem scan of {dar_output_dir}/{job_id}/.daml/dist/*.dar.
+
+    Returns empty string if none found or the file no longer exists on disk.
+    """
+    # Layer 1: DeployedContract row
+    try:
+        from db.session import get_db_session
+        from db.models import DeployedContract
+        with get_db_session() as session:
+            row = (
+                session.query(DeployedContract)
+                .filter_by(job_id=job_id)
+                .order_by(DeployedContract.created_at.desc())
+                .first()
+            )
+            if row and row.dar_path and os.path.exists(row.dar_path):
+                return row.dar_path
+    except Exception as e:
+        logger.debug("DAR lookup from DB failed", error=str(e))
+
+    # Layer 2: Job result JSON
+    data = _get_job(job_id) or {}
+    dp = data.get("dar_path", "")
+    if dp and os.path.exists(dp):
+        return dp
+
+    # Layer 3: Filesystem scan
+    settings = get_settings()
+    dist_dir = os.path.join(settings.dar_output_dir, job_id, ".daml", "dist")
+    if os.path.isdir(dist_dir):
+        for fname in os.listdir(dist_dir):
+            if fname.endswith(".dar"):
+                return os.path.join(dist_dir, fname)
+    return ""
+
+
+def _resolve_project_dir(job_id: str) -> str:
+    """Locate the Daml project directory for a given job."""
+    settings = get_settings()
+    project_dir = os.path.join(settings.dar_output_dir, job_id)
+    if os.path.isdir(project_dir):
+        return project_dir
+    return ""
+
+
+@router.get("/download/{job_id}/dar")
+async def download_dar(job_id: str):
+    """Download the compiled DAR file for a completed job.
+
+    Returns the raw DAR binary (application/octet-stream).
+    """
+    data = _get_job(job_id)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if data.get("status") != "complete":
+        raise HTTPException(status_code=400, detail="Job is not complete; no DAR available")
+
+    dar_path = _resolve_dar_path(job_id)
+    if not dar_path:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "DAR file not found on disk. It may have been cleaned up "
+                "(ephemeral storage) or the job never produced a DAR."
+            ),
+        )
+
+    filename = os.path.basename(dar_path) or f"{job_id}.dar"
+    logger.info("Serving DAR download", job_id=job_id, path=dar_path, filename=filename)
+    return FileResponse(
+        path=dar_path,
+        media_type="application/octet-stream",
+        filename=filename,
+    )
+
+
+@router.get("/download/{job_id}/source")
+async def download_source(job_id: str):
+    """Download the full Daml project source as a zip archive.
+
+    Excludes build artifacts (.daml/dist, .daml/build) to keep the archive small.
+    """
+    data = _get_job(job_id)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if data.get("status") not in ("complete", "failed"):
+        raise HTTPException(status_code=400, detail="Job is still in progress")
+
+    project_dir = _resolve_project_dir(job_id)
+    if not project_dir:
+        raise HTTPException(
+            status_code=404,
+            detail="Project directory not found on disk (may have been cleaned up).",
+        )
+
+    # Zip project in memory, skipping build artifacts
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(project_dir):
+            # Skip build directories
+            dirs[:] = [d for d in dirs if d not in (".daml", "__pycache__", "dist")]
+            for fname in files:
+                full = os.path.join(root, fname)
+                rel = os.path.relpath(full, project_dir)
+                try:
+                    zf.write(full, arcname=os.path.join(job_id[:8], rel))
+                except OSError:
+                    continue
+    buf.seek(0)
+
+    logger.info("Serving source zip download", job_id=job_id, project_dir=project_dir)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{job_id[:8]}-source.zip"'},
+    )
 
 
 @router.get("/health", response_model=HealthResponse)
