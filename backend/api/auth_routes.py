@@ -297,6 +297,7 @@ class EmailAuthResponse(BaseModel):
     email: str
     display_name: Optional[str]
     party_id: Optional[str]
+    party_name: Optional[str] = None
     needs_party: bool
     expires_in_days: int
 
@@ -343,8 +344,9 @@ async def email_signup(request: Request, body: EmailSignupRequest = Body()):
         token=token,
         email=account["email"],
         display_name=account["display_name"],
-        party_id=account.get("party_id"),
-        needs_party=account.get("party_id") is None,
+        party_id=None,
+        party_name=None,
+        needs_party=True,
         expires_in_days=settings.jwt_expiry_days,
     )
 
@@ -358,18 +360,28 @@ async def email_login(request: Request, body: EmailLoginRequest = Body()):
     if not account:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    # Force party re-creation every session: ignore any previously-linked party
+    # so each login lands the user back on the party-creation wizard. This avoids
+    # `UNKNOWN_SUBMITTERS` errors when the Canton sandbox has lost the party.
+    display_name = account["display_name"]
+    if account.get("party_name") and display_name == account["party_name"]:
+        # Stale overwrite from a previous link-party bug — recover the username
+        # from the email local-part.
+        display_name = account["email"].split("@")[0]
+
     token = _create_email_token(
         email=account["email"],
-        display_name=account["display_name"] or "",
-        party_id=account.get("party_id"),
+        display_name=display_name or "",
+        party_id=None,
     )
 
     return EmailAuthResponse(
         token=token,
         email=account["email"],
-        display_name=account["display_name"],
-        party_id=account.get("party_id"),
-        needs_party=account.get("party_id") is None,
+        display_name=display_name,
+        party_id=None,
+        party_name=None,
+        needs_party=True,
         expires_in_days=settings.jwt_expiry_days,
     )
 
@@ -406,6 +418,7 @@ async def email_link_party(
         email=account["email"],
         display_name=account["display_name"],
         party_id=account.get("party_id"),
+        party_name=account.get("party_name"),
         needs_party=False,
         expires_in_days=settings.jwt_expiry_days,
     )
