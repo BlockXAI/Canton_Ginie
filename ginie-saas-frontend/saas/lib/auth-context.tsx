@@ -25,6 +25,7 @@ interface AuthState {
   token: string | null;
   partyId: string | null;
   displayName: string | null;
+  partyName: string | null;
   fingerprint: string | null;
   email: string | null;
   needsParty: boolean;
@@ -49,6 +50,7 @@ const defaultState: AuthState = {
   token: null,
   partyId: null,
   displayName: null,
+  partyName: null,
   fingerprint: null,
   email: null,
   needsParty: false,
@@ -105,11 +107,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     (token: string, partyId: string, displayName: string, fingerprint: string) => {
+      // Ed25519-only login — no email account, party name == displayName.
       const next: AuthState = {
         isAuthenticated: true,
         token,
         partyId,
         displayName,
+        partyName: displayName,
         fingerprint,
         email: null,
         needsParty: false,
@@ -124,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     token: string;
     email: string;
     display_name: string | null;
+    party_name?: string | null;
     party_id: string | null;
     needs_party: boolean;
   }): EmailAuthResult => {
@@ -132,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token: data.token,
       partyId: data.party_id,
       displayName: data.display_name || data.email.split("@")[0] || "Account",
+      partyName: data.party_name ?? null,
       fingerprint: `email:${data.email}`,
       email: data.email,
       needsParty: data.needs_party,

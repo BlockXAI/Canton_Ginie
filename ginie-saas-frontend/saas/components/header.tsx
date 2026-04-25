@@ -300,7 +300,8 @@ export function Header(): ReactNode {
 
   const [mobileExpanded, setMobileExpanded] = useState<string | null>(null);
 
-  const { isAuthenticated, displayName, logout } = useAuth();
+  const { isAuthenticated, displayName, partyName, logout } = useAuth();
+  const identityLabel = partyName || displayName || "Party";
 
 
 
@@ -343,9 +344,7 @@ export function Header(): ReactNode {
           />
 
           <span style={{ fontFamily: "EB Garamond, serif" }} className="text-2xl md:text-3xl font-semibold text-accent leading-0 max-[1200px]:hidden max-[850px]:inline">
-
-            {isAuthenticated && displayName ? displayName : "Ginie"}
-
+            Ginie
           </span>
 
         </a>
@@ -404,7 +403,7 @@ export function Header(): ReactNode {
 
                 <User className="w-3.5 h-3.5" />
 
-                {displayName || "Party"}
+                {identityLabel}
 
               </span>
 
@@ -534,7 +533,7 @@ export function Header(): ReactNode {
 
                     <User className="w-4 h-4" />
 
-                    {displayName || "Party"}
+                    {identityLabel}
 
                   </span>
 

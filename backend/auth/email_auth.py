@@ -13,6 +13,16 @@ import structlog
 logger = structlog.get_logger()
 
 
+def _resolve_party_name(session, party_id: Optional[str]) -> Optional[str]:
+    """Look up the registered party display name (different from email username)."""
+    if not party_id:
+        return None
+    from db.models import RegisteredParty
+
+    party = session.query(RegisteredParty).filter_by(party_id=party_id).first()
+    return party.display_name if party else None
+
+
 def hash_password(password: str) -> str:
     """Hash a password using bcrypt with a per-password salt."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
@@ -51,6 +61,7 @@ def create_email_account(email: str, password: str, display_name: Optional[str] 
             "email": account.email,
             "display_name": account.display_name,
             "party_id": account.party_id,
+            "party_name": None,
         }
 
     logger.info("Email account created", email=email_norm)
@@ -77,6 +88,7 @@ def authenticate_email(email: str, password: str) -> Optional[dict]:
             "email": account.email,
             "display_name": account.display_name,
             "party_id": account.party_id,
+            "party_name": _resolve_party_name(session, account.party_id),
         }
     return result
 
@@ -92,14 +104,15 @@ def link_party_to_email(email: str, party_id: str, display_name: Optional[str] =
         account = session.query(EmailAccount).filter_by(email=email_norm).first()
         if not account:
             raise ValueError("Email account not found.")
+        # Do NOT overwrite account.display_name — username and party name
+        # are independent identities. The username is just a login wrapper.
         account.party_id = party_id
-        if display_name:
-            account.display_name = display_name
         result = {
             "id": account.id,
             "email": account.email,
             "display_name": account.display_name,
             "party_id": account.party_id,
+            "party_name": display_name or _resolve_party_name(session, party_id),
         }
 
     logger.info("Party linked to email account", email=email_norm, party_id=party_id)
@@ -122,4 +135,5 @@ def get_email_account(email: str) -> Optional[dict]:
             "email": account.email,
             "display_name": account.display_name,
             "party_id": account.party_id,
+            "party_name": _resolve_party_name(session, account.party_id),
         }
