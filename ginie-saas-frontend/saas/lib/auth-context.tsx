@@ -37,6 +37,7 @@ interface EmailAuthResult {
 }
 
 interface AuthContextValue extends AuthState {
+  hydrated: boolean;
   login: (token: string, partyId: string, displayName: string, fingerprint: string) => void;
   loginEmail: (email: string, password: string) => Promise<EmailAuthResult>;
   signupEmail: (email: string, password: string, displayName?: string) => Promise<EmailAuthResult>;
@@ -86,6 +87,7 @@ function clearStorage() {
 
 const AuthContext = createContext<AuthContextValue>({
   ...defaultState,
+  hydrated: false,
   login: () => {},
   loginEmail: async () => ({ needsParty: false, partyId: null }),
   signupEmail: async () => ({ needsParty: true, partyId: null }),
@@ -96,6 +98,7 @@ const AuthContext = createContext<AuthContextValue>({
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(defaultState);
+  const [hydrated, setHydrated] = useState(false);
 
   // Restore from sessionStorage on mount
   useEffect(() => {
@@ -103,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (stored.isAuthenticated) {
       setState(stored);
     }
+    setHydrated(true);
   }, []);
 
   const login = useCallback(
@@ -262,6 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         ...state,
+        hydrated,
         login,
         loginEmail,
         signupEmail,

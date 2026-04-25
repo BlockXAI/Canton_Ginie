@@ -19,11 +19,16 @@ function isSetup(path: string): boolean {
 }
 
 export function AuthGate({ children }: { children: ReactNode }): ReactNode {
-  const { isAuthenticated, needsParty, partyId } = useAuth();
+  const { hydrated, isAuthenticated, needsParty, partyId } = useAuth();
   const router = useRouter();
   const pathname = usePathname() || "/";
 
   useEffect(() => {
+    // Wait until sessionStorage has been read; otherwise we would race against
+    // hydration and bounce a freshly-authenticated user to /login on every full
+    // page load (e.g. window.location.href navigation to /sandbox/<jobId>).
+    if (!hydrated) return;
+
     // Anonymous users → /login (except already on a public route).
     if (!isAuthenticated && !isPublic(pathname)) {
       router.replace("/login");
@@ -38,9 +43,11 @@ export function AuthGate({ children }: { children: ReactNode }): ReactNode {
     if (isAuthenticated && partyId && !needsParty && isPublic(pathname)) {
       router.replace("/");
     }
-  }, [isAuthenticated, needsParty, partyId, pathname, router]);
+  }, [hydrated, isAuthenticated, needsParty, partyId, pathname, router]);
 
-  // Render nothing while we are about to redirect to avoid a flash of gated content.
+  // Render nothing while hydrating or while a redirect is about to happen,
+  // to avoid a flash of gated content.
+  if (!hydrated) return null;
   if (!isAuthenticated && !isPublic(pathname)) return null;
   if (isAuthenticated && (needsParty || !partyId) && !isSetup(pathname) && !isPublic(pathname)) {
     return null;
