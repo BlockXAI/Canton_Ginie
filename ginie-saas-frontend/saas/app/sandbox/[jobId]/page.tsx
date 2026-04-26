@@ -207,6 +207,38 @@ export default function SandboxPage() {
     }
   }, [status, result, resultLoading, fetchResult]);
 
+  // Past-job rehydration: when the user opens the sandbox page for a job
+  // that already completed (e.g. clicked from /history), the WS endpoint
+  // sends the entire ``result_json`` row as its initial status snapshot
+  // \u2014 it carries every field the result panel needs (generated_code,
+  // diagram_mermaid, audit_reports, project_files, contract_spec, ...).
+  // Bootstrap ``result`` from that snapshot immediately so the user sees
+  // the code + diagram + compliance dashboard on the first frame instead
+  // of staring at "Loading deployment artifacts" for the full /result
+  // backoff window. ``fetchResult`` still runs and can refine the payload
+  // (e.g. when result_json was written by an older backend missing newer
+  // fields), but the page is no longer blocked on it.
+  useEffect(() => {
+    if (result) return;
+    if (!status) return;
+    if (status.status !== "complete" && status.status !== "failed") return;
+    const snap = status as unknown as Partial<JobResult> & { status: string };
+    const looksLikeResult =
+      typeof snap.generated_code === "string" ||
+      typeof snap.contract_id === "string" ||
+      typeof snap.diagram_mermaid === "string" ||
+      (snap.project_files && typeof snap.project_files === "object");
+    if (!looksLikeResult) return;
+    setResult(snap as JobResult);
+    if (snap.audit_reports?.json) {
+      try {
+        const parsed = JSON.parse(snap.audit_reports.json);
+        const findings = parsed?.securityAudit?.report?.findings || [];
+        setAuditFindings(findings);
+      } catch { /* ignore parse errors */ }
+    }
+  }, [status, result]);
+
   useEffect(() => {
     if (status?.status === "unknown") {
       const timer = setTimeout(() => router.push("/"), 3000);

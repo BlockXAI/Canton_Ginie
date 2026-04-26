@@ -15,6 +15,7 @@ from agents.diagram_agent import parse_daml_for_diagram, generate_mermaid
 from security.hybrid_auditor import run_hybrid_audit
 from config import get_settings
 from utils.branding import prepend_brand_header
+from rag.curated_loader import get_curated_example
 from pipeline.events import (
     emit,
     emit_log,
@@ -451,31 +452,61 @@ def fix_node(state: dict) -> dict:
 
 
 def fallback_node(state: dict) -> dict:
-    """Replace generated code with guaranteed-compilable fallback contract."""
+    """Replace generated code with guaranteed-compilable fallback contract.
+
+    Prefers the curated, hand-audited template that matches the Plan's
+    ``pattern`` / ``domain`` (e.g. ``voting-dao``, ``soulbound-credential``)
+    over the generic two-party ``SimpleContract``. The curated templates
+    are guaranteed to compile against the Daml SDK we ship with, so they
+    are always a safer fallback than the LLM's failing output AND they
+    actually express the user's intent instead of a meaningless transfer.
+    Falls back to ``FALLBACK_CONTRACT`` only when no curated pattern matches.
+    """
     logger.info("Node: fallback (using guaranteed contract)", job_id=state.get("job_id"))
     _push_status(state, "Using fallback contract template", 75)
-    emit(
-        state,
-        "fallback_used",
-        "All AI fix attempts exhausted \u2014 deploying guaranteed-safe fallback template",
-        level="warn",
-    )
+
+    spec = state.get("contract_spec") or {}
+    pattern = spec.get("pattern") if isinstance(spec, dict) else None
+    domain = spec.get("domain") if isinstance(spec, dict) else None
+    curated = get_curated_example(pattern, domain)
+    if curated:
+        stem, src = curated
+        fallback_code = src
+        fallback_label = f"curated:{stem}"
+        emit(
+            state,
+            "fallback_used",
+            f"All AI fix attempts exhausted \u2014 deploying curated {stem} reference template",
+            level="warn",
+            data={"template": stem, "kind": "curated"},
+        )
+    else:
+        fallback_code = FALLBACK_CONTRACT
+        fallback_label = "generic-simple-contract"
+        emit(
+            state,
+            "fallback_used",
+            "All AI fix attempts exhausted \u2014 deploying guaranteed-safe fallback template",
+            level="warn",
+            data={"template": fallback_label, "kind": "generic"},
+        )
 
     # Preserve original project files for the user even though we're falling back
     original_project_files = state.get("project_files", {})
 
     return {
         **state,
-        "generated_code":           FALLBACK_CONTRACT,
+        "generated_code":           fallback_code,
         "attempt_number":           0,
         "compile_errors":           [],
         "compile_success":          False,
         "fallback_used":            True,
+        "fallback_template":        fallback_label,
         "project_mode":             False,
         "project_files":            {},
         "daml_yaml":                "",
         "original_project_files":   original_project_files,
-        "current_step":             "Using fallback contract template",
+        "current_step":             f"Using fallback contract template ({fallback_label})",
         "progress":                 75,
     }
 
