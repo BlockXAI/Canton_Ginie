@@ -402,6 +402,39 @@ async def get_job_result(job_id: str):
     )
 
 
+@router.get("/jobs/{job_id}/events")
+async def list_job_events(job_id: str):
+    """Return the full structured event log for a job.
+
+    Used as a polling-friendly fallback by the frontend live-log feed when
+    the WebSocket cannot be opened (e.g. corporate proxy / mobile).
+    """
+    items: list[dict] = []
+    try:
+        from db.session import get_db_session
+        from db.models import JobEvent
+        with get_db_session() as session:
+            rows = (
+                session.query(JobEvent)
+                .filter(JobEvent.job_id == job_id)
+                .order_by(JobEvent.seq.asc(), JobEvent.id.asc())
+                .all()
+            )
+            for r in rows:
+                items.append({
+                    "e": r.event_type,
+                    "seq": r.seq,
+                    "level": r.level,
+                    "message": r.message,
+                    "data": r.data,
+                    "ts": r.created_at.isoformat() if r.created_at else None,
+                })
+    except Exception as e:
+        logger.warning("/jobs/{job_id}/events query failed", job_id=job_id, error=str(e))
+        # Return empty rather than 500 so the UI just shows "no events yet".
+    return {"job_id": job_id, "count": len(items), "events": items}
+
+
 @router.get("/me/contracts")
 async def list_my_contracts(user: dict = Depends(get_current_user)):
     """Return every contract this user has ever deployed, across all of the
@@ -463,6 +496,125 @@ async def list_my_contracts(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Failed to load contract history")
 
     return {"contracts": items, "count": len(items), "user_email": user_email}
+
+
+def _user_email_from_claims(user: dict) -> str:
+    """Extract the user's stable email from JWT claims."""
+    fp = (user.get("fingerprint") or "")
+    sub = (user.get("sub") or "")
+    if isinstance(fp, str) and fp.startswith("email:"):
+        return fp[len("email:"):]
+    if isinstance(sub, str) and sub.startswith("email:"):
+        return sub[len("email:"):]
+    return ""
+
+
+@router.get("/me/jobs")
+async def list_my_jobs(user: dict = Depends(get_current_user)):
+    """Every job (successful or failed) this user has ever started.
+
+    Powers the History page \u2014 a card per past prompt with status, network,
+    timestamps, and links to the live-log replay / artifact downloads.
+    """
+    user_email = _user_email_from_claims(user)
+    if not user_email:
+        return {"jobs": [], "count": 0, "user_email": None}
+
+    out: list[dict] = []
+    try:
+        from db.session import get_db_session
+        from db.models import JobHistory, DeployedContract
+        with get_db_session() as session:
+            jobs = (
+                session.query(JobHistory)
+                .filter(JobHistory.user_email == user_email)
+                .order_by(JobHistory.created_at.desc())
+                .all()
+            )
+            # Look up matching contracts in one shot for the join.
+            job_ids = [j.job_id for j in jobs]
+            contracts_by_job: dict[str, DeployedContract] = {}
+            if job_ids:
+                rows = (
+                    session.query(DeployedContract)
+                    .filter(DeployedContract.job_id.in_(job_ids))
+                    .order_by(DeployedContract.created_at.asc())
+                    .all()
+                )
+                for r in rows:
+                    contracts_by_job[r.job_id] = r  # last write wins -> latest
+
+            for j in jobs:
+                rj = j.result_json if isinstance(j.result_json, dict) else {}
+                contract = contracts_by_job.get(j.job_id)
+                out.append({
+                    "job_id": j.job_id,
+                    "prompt": j.prompt or rj.get("user_input", ""),
+                    "status": j.status,
+                    "current_step": j.current_step,
+                    "progress": j.progress,
+                    "error_message": j.error_message,
+                    "canton_env": j.canton_env,
+                    "created_at": j.created_at.isoformat() if j.created_at else None,
+                    "updated_at": j.updated_at.isoformat() if j.updated_at else None,
+                    "contract_id": (contract.contract_id if contract else None) or rj.get("contract_id"),
+                    "template_id": (contract.template_id if contract else None) or rj.get("template_id") or rj.get("template"),
+                    "explorer_link": (contract.explorer_link if contract else None) or rj.get("explorer_link"),
+                    "deploy_gate": rj.get("deploy_gate"),
+                    "security_score": rj.get("security_score"),
+                    "compliance_score": rj.get("compliance_score"),
+                    "fallback_used": rj.get("fallback_used"),
+                    "has_dar": bool(rj.get("dar_path") or (contract and contract.dar_path)),
+                })
+    except Exception as e:
+        logger.warning("/me/jobs query failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to load job history")
+
+    return {"jobs": out, "count": len(out), "user_email": user_email}
+
+
+@router.delete("/me/jobs/{job_id}")
+async def delete_my_job(job_id: str, user: dict = Depends(get_current_user)):
+    """Delete a job (and its events / deployed-contract row) from history.
+
+    Hard delete \u2014 we only ever delete jobs the requesting user owns. Canton
+    state itself is unaffected; only this app's metadata is removed.
+    """
+    user_email = _user_email_from_claims(user)
+    if not user_email:
+        raise HTTPException(status_code=403, detail="Email-account token required")
+
+    try:
+        from db.session import get_db_session
+        from db.models import JobHistory
+        with get_db_session() as session:
+            job = (
+                session.query(JobHistory)
+                .filter(JobHistory.job_id == job_id)
+                .first()
+            )
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found")
+            if (job.user_email or "") != user_email:
+                # Don't leak existence \u2014 same 404.
+                raise HTTPException(status_code=404, detail="Job not found")
+            session.delete(job)  # cascade removes contracts + events
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("/me/jobs/{job_id} DELETE failed", job_id=job_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to delete job")
+
+    # Best-effort: also drop in-memory + Redis caches so the UI immediately
+    # sees the deletion on next fetch.
+    try:
+        _in_memory_jobs.pop(job_id, None)
+        r = _get_redis()
+        r.delete(f"job:{job_id}")
+    except Exception:
+        pass
+
+    return {"deleted": job_id}
 
 
 @router.post("/iterate/{job_id}", response_model=GenerateResponse)

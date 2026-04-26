@@ -2,7 +2,7 @@
 
 
 
-import { ChevronDown, User, Database, LogOut } from "lucide-react";
+import { ChevronDown, User, Database, LogOut, History } from "lucide-react";
 
 import { AnimatePresence, motion } from "motion/react";
 
@@ -387,6 +387,13 @@ export function Header(): ReactNode {
 
         <div className="flex items-center gap-4 max-[850px]:hidden">
 
+          {isAuthenticated && (
+            <a href="/history" className="inline-flex items-center gap-1.5 rounded-full bg-foreground/5 border border-border px-3 py-1.5 text-sm font-medium text-foreground/80 hover:bg-foreground/10 transition-colors">
+              <History className="w-3.5 h-3.5" />
+              History
+            </a>
+          )}
+
           <a href="/explorer" className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 border border-accent/20 px-3 py-1.5 text-sm font-medium text-accent hover:bg-accent/20 transition-colors">
 
             <Database className="w-3.5 h-3.5" />
@@ -518,6 +525,13 @@ export function Header(): ReactNode {
 
 
               <div className="flex flex-col gap-3 pt-8 pb-2">
+
+                {isAuthenticated && (
+                  <a href="/history" className="inline-flex items-center gap-1.5 text-base font-medium text-foreground/80" onClick={closeMobile}>
+                    <History className="w-4 h-4" />
+                    History
+                  </a>
+                )}
 
                 <a href="/explorer" className="inline-flex items-center gap-1.5 text-base font-medium text-accent" onClick={closeMobile}>
 

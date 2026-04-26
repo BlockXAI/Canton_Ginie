@@ -105,16 +105,12 @@ async def ws_job_status(websocket: WebSocket, job_id: str):
     logger.info("WS connection opened", job_id=job_id)
 
     try:
-        # Send current status immediately
+        # 1. Send current status snapshot immediately (powers the legacy
+        #    polling fallback + the progress-bar / stage indicator).
         from api.routes import _get_job, _in_memory_jobs
         current = _get_job(job_id) or _in_memory_jobs.get(job_id)
         if current:
             await websocket.send_text(json.dumps(current))
-
-            # If already terminal, close after sending
-            if current.get("status") in ("complete", "failed"):
-                await websocket.close(code=1000, reason="Job already finished")
-                return
         else:
             await websocket.send_text(json.dumps({
                 "job_id": job_id,
@@ -123,6 +119,45 @@ async def ws_job_status(websocket: WebSocket, job_id: str):
                 "progress": 0,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }))
+
+        # 2. Replay all persisted job events so the live-log feed is fully
+        #    populated even after a page refresh / network reconnect.
+        try:
+            from db.session import get_db_session
+            from db.models import JobEvent
+            with get_db_session() as session:
+                rows = (
+                    session.query(JobEvent)
+                    .filter(JobEvent.job_id == job_id)
+                    .order_by(JobEvent.seq.asc(), JobEvent.id.asc())
+                    .all()
+                )
+                events_payload = [
+                    {
+                        "type": "event",
+                        "e": row.event_type,
+                        "seq": row.seq,
+                        "level": row.level,
+                        "message": row.message,
+                        "data": row.data,
+                        "ts": row.created_at.isoformat() if row.created_at else None,
+                    }
+                    for row in rows
+                ]
+            if events_payload:
+                await websocket.send_text(json.dumps({
+                    "type": "history",
+                    "events": events_payload,
+                }))
+        except Exception as e:
+            logger.debug("Event history replay failed", job_id=job_id, error=str(e))
+
+        # 3. If the job is already terminal there is nothing more to push;
+        #    keep the socket open briefly so the client can read the history
+        #    snapshot, then close.
+        if current and current.get("status") in ("complete", "failed"):
+            await websocket.close(code=1000, reason="Job already finished")
+            return
 
         # Keep connection alive — listen for client messages (ping/close)
         while True:

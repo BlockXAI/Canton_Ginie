@@ -3,6 +3,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useJobStatus } from "@/lib/use-job-status";
+import { useJobEvents } from "@/lib/use-job-events";
+import { StageStrip } from "@/components/sandbox/StageStrip";
+import { LiveLog } from "@/components/sandbox/LiveLog";
 import {
   ArrowLeft,
   Loader2,
@@ -86,13 +89,6 @@ function CopyButton({ text }: { text: string }): ReactNode {
   );
 }
 
-const pipelineSteps = [
-  { label: "Analyzing", minProgress: 0 },
-  { label: "Generating", minProgress: 20 },
-  { label: "Compiling", minProgress: 45 },
-  { label: "Auditing", minProgress: 75 },
-  { label: "Deploying", minProgress: 85 },
-];
 
 function ScoreRing({ score, label, size = 80 }: { score: number; label: string; size?: number }): ReactNode {
   const radius = (size - 8) / 2;
@@ -143,6 +139,7 @@ export default function SandboxPage() {
   const jobId = params.jobId as string;
 
   const { status, transport } = useJobStatus(jobId);
+  const { events: liveEvents, stages: liveStages } = useJobEvents(jobId);
   const [result, setResult] = useState<JobResult | null>(null);
   const [activeTab, setActiveTab] = useState<"code" | "diagram" | "files">("code");
   const [showFindings, setShowFindings] = useState(false);
@@ -262,57 +259,12 @@ export default function SandboxPage() {
           </p>
         </div>
 
-        {/* Pipeline Steps */}
+        {/* Pipeline stage strip + live log feed */}
         {status && (
           <div className="mb-10">
-            <div className="flex items-center justify-between gap-1">
-              {pipelineSteps.map((step, i) => {
-                const active = (status.progress ?? 0) >= step.minProgress;
-                const nextStep = pipelineSteps[i + 1];
-                const current =
-                  active &&
-                  (i === pipelineSteps.length - 1 ||
-                    (status.progress ?? 0) < (nextStep?.minProgress ?? 100));
-                return (
-                  <div key={step.label} className="flex flex-1 flex-col items-center gap-1.5">
-                    <div
-                      className={`flex h-9 w-9 items-center justify-center rounded-full border text-xs font-bold transition-all duration-500 ${
-                        status.status === "complete"
-                          ? "border-green-500/50 bg-green-500/15 text-green-600 dark:text-green-400"
-                          : status.status === "failed" && active && !current
-                            ? "border-red-500/30 bg-red-500/10 text-red-500"
-                            : current && isProcessing
-                              ? "border-accent bg-accent/20 text-foreground shadow-[0_0_12px_rgba(168,217,70,0.2)]"
-                              : active
-                                ? "border-accent/40 bg-accent/10 text-foreground/70"
-                                : "border-border bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {status.status === "complete" ? (
-                        <Check className="h-3.5 w-3.5" />
-                      ) : current && isProcessing ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        i + 1
-                      )}
-                    </div>
-                    <span
-                      className={`text-[10px] font-medium transition-colors ${
-                        current && isProcessing
-                          ? "text-foreground"
-                          : active
-                            ? "text-foreground/60"
-                            : "text-muted-foreground/50"
-                      }`}
-                    >
-                      {step.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+            <StageStrip stages={liveStages} />
 
-            {/* Progress bar */}
+            {/* Overall progress bar */}
             <div className="mt-6">
               <div className="mb-2 flex justify-between text-xs">
                 <span className="text-muted-foreground">{status.current_step}</span>
@@ -332,6 +284,19 @@ export default function SandboxPage() {
                   style={{ width: `${status.progress}%` }}
                 />
               </div>
+            </div>
+
+            {/* Live log feed — every backend event in chronological order */}
+            <div className="mt-6">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Live deployment log
+                </h3>
+                <span className="font-mono text-[10px] text-muted-foreground/60">
+                  {liveEvents.length} event{liveEvents.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <LiveLog events={liveEvents} autoScroll={isProcessing} />
             </div>
 
             {status.error_message && (

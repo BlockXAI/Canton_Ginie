@@ -114,3 +114,32 @@ class DeployedContract(Base):
         Index("idx_deployed_contracts_party", "party_id"),
         Index("idx_deployed_contracts_user_email", "user_email"),
     )
+
+
+class JobEvent(Base):
+    """Append-only event log for a generation/deployment job.
+
+    Each row is one entry in the live log feed shown on the /sandbox page
+    (and replayed on reload). Events are emitted from pipeline nodes with a
+    structured `event_type` (e.g. ``stage_started:compile``) plus a
+    human-readable ``message`` and optional JSON payload.
+    """
+
+    __tablename__ = "job_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Text, ForeignKey("job_history.job_id", ondelete="CASCADE"), nullable=False)
+    seq = Column(Integer, nullable=False, default=0)
+    # Free-form taxonomy. Common prefixes: "stage_started:<stage>",
+    # "stage_completed:<stage>", "stage_failed:<stage>", "log".
+    event_type = Column(Text, nullable=False, default="log")
+    # "info" | "warn" | "error" | "success" | "debug"
+    level = Column(Text, nullable=False, default="info")
+    message = Column(Text, nullable=False, default="")
+    data = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_job_events_job_seq", "job_id", "seq"),
+        Index("idx_job_events_job", "job_id"),
+    )
