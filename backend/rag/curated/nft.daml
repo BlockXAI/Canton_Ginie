@@ -1,0 +1,50 @@
+-- =============================================================
+-- Curated reference pattern: Transferable NFT / collectible
+-- =============================================================
+-- A unique digital asset that CAN be transferred. The opposite
+-- pattern from `soulbound-credential`: a Transfer choice is the
+-- defining feature here.
+--
+-- Key idioms demonstrated:
+--   * `Transfer` choice consumes the current contract and creates
+--     a fresh one with a new `owner`. NEVER mutate `owner` in place.
+--   * Owner-only Transfer; minter retains a separate Burn right.
+--   * `tokenId : Text` plus `metadataUri : Text` (IPFS / HTTPS pointer).
+--   * No `amount : Decimal` field \xe2\x80\x94 this is non-fungible.
+-- =============================================================
+
+module Main where
+
+template NFT
+  with
+    minter      : Party
+    owner       : Party
+    tokenId     : Text
+    name        : Text
+    metadataUri : Text
+    mintedAt    : Time
+  where
+    signatory minter
+    observer owner
+
+    ensure tokenId /= "" && name /= "" && metadataUri /= ""
+
+    -- Owner transfers the NFT to a new owner. Consuming \xe2\x80\x94 the old
+    -- contract is archived and a fresh one with the new owner is born.
+    choice Transfer : ContractId NFT
+      with
+        newOwner : Party
+      controller owner
+      do
+        assertMsg "Cannot transfer to yourself" (newOwner /= owner)
+        create this with owner = newOwner
+
+    -- Minter retains a Burn right (e.g. for content takedowns).
+    -- Consuming \xe2\x80\x94 the NFT is permanently destroyed.
+    choice Burn : ()
+      with
+        reason : Text
+      controller minter
+      do
+        assertMsg "Burn reason must be supplied" (reason /= "")
+        return ()

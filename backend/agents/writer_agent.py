@@ -2,8 +2,10 @@ import re
 import structlog
 
 from rag.vector_store import search_daml_patterns, search_signatures
+from rag.curated_loader import format_curated_for_prompt
 from security.generation_rules import format_rules_for_prompt
 from pipeline.spec_synth import format_spec_for_prompt
+from utils.branding import prepend_brand_header
 from utils.llm_client import call_llm
 
 logger = structlog.get_logger()
@@ -135,6 +137,17 @@ def run_writer_agent(
     spec_block = format_spec_for_prompt(contract_spec) if contract_spec else ""
     spec_section = f"\n\n{spec_block}\n" if spec_block else ""
 
+    # Curated gold-standard reference \u2014 a hand-audited Daml file for
+    # this pattern that demonstrates the right structural choices
+    # (list-of-Party, single parameterised choice, descriptive
+    # assertMsg, deliberate non-behaviour omissions). Sits above the
+    # noisier vector-store RAG so the writer treats it as the
+    # imitation target.
+    spec_pattern = (contract_spec or {}).get("pattern") if contract_spec else None
+    spec_domain = (contract_spec or {}).get("domain") if contract_spec else None
+    curated_block = format_curated_for_prompt(spec_pattern, spec_domain)
+    curated_section = f"\n{curated_block}\n" if curated_block else ""
+
     if contract_spec:
         # When we have a structured plan, the plan dictates fields \u2014 do
         # NOT force an `amount` field on every contract.
@@ -162,7 +175,7 @@ REQUIRED FEATURES:
 
 CHOICES TO IMPLEMENT:
 {chr(10).join(f'- {c}' for c in choices[:3]) if choices else '- Transfer'}
-{constraints_section}{spec_section}
+{constraints_section}{spec_section}{curated_section}
 {rag_section}
 
 IMPORTANT: Use module name 'Main', template name '{template_name}'.
@@ -175,6 +188,19 @@ Start your response with: module Main where"""
         rag_context = []
 
     logger.info("Running writer agent", contract_type=contract_type, templates=[template_name])
+
+    # Brand-stamp every code path: success, fallback, retry-fallback. Idempotent.
+    spec_pattern = (contract_spec or {}).get("pattern") if contract_spec else None
+    spec_domain = (contract_spec or {}).get("domain") if contract_spec else None
+
+    def _ok(code: str) -> dict:
+        branded = prepend_brand_header(
+            code,
+            pattern=spec_pattern,
+            domain=spec_domain,
+            module_name="Main",
+        )
+        return {"success": True, "daml_code": branded}
 
     max_retries = 2
     for attempt in range(max_retries + 1):
@@ -191,10 +217,7 @@ Start your response with: module Main where"""
                     continue
                 # Use fallback
                 logger.info("Writer agent: using fallback template")
-                return {
-                    "success": True,
-                    "daml_code": _generate_fallback(template_name, party1, party2),
-                }
+                return _ok(_generate_fallback(template_name, party1, party2))
 
             clean_code = _extract_daml_code(raw_code)
             clean_code = _post_process(clean_code, template_name, party1, party2)
@@ -209,7 +232,7 @@ Start your response with: module Main where"""
                 clean_code = _auto_fix_structure(clean_code, template_name, party1, party2)
 
             logger.info("Writer agent completed", code_length=len(clean_code))
-            return {"success": True, "daml_code": clean_code}
+            return _ok(clean_code)
 
         except Exception as e:
             logger.error("Writer agent error", error=str(e), attempt=attempt)
@@ -217,15 +240,9 @@ Start your response with: module Main where"""
                 continue
             # Final fallback
             logger.info("Writer agent: using fallback after error")
-            return {
-                "success": True,
-                "daml_code": _generate_fallback(template_name, party1, party2),
-            }
+            return _ok(_generate_fallback(template_name, party1, party2))
 
-    return {
-        "success": True,
-        "daml_code": _generate_fallback(template_name, party1, party2),
-    }
+    return _ok(_generate_fallback(template_name, party1, party2))
 
 
 def _derive_template_name(contract_type: str, description: str) -> str:

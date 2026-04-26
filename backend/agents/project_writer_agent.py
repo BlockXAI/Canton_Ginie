@@ -17,8 +17,10 @@ from __future__ import annotations
 import re
 import structlog
 
+from rag.curated_loader import format_curated_for_prompt
 from security.generation_rules import format_rules_for_prompt
 from pipeline.spec_synth import format_spec_for_prompt
+from utils.branding import prepend_brand_header
 from utils.llm_client import call_llm
 
 logger = structlog.get_logger()
@@ -154,7 +156,17 @@ def run_project_writer_agent(
         logger.error("Core template generation failed")
         return {"success": False, "error": "Core template generation failed"}
 
-    files[f"daml/{core_module}.daml"] = core_code
+    # Brand-stamp every generated module so every file in the project
+    # carries Canton.Ginie attribution + plan metadata.
+    spec_pattern = (contract_spec or {}).get("pattern") if contract_spec else None
+    spec_domain = (contract_spec or {}).get("domain") if contract_spec else None
+
+    files[f"daml/{core_module}.daml"] = prepend_brand_header(
+        core_code,
+        pattern=spec_pattern,
+        domain=spec_domain,
+        module_name=core_module,
+    )
     generated_context.append(core_code)
 
     # ------------------------------------------------------------------
@@ -178,7 +190,12 @@ def run_project_writer_agent(
             role=tspec.get("role", "lifecycle"),
         )
         if sup_code:
-            files[f"daml/{mod_name}.daml"] = sup_code
+            files[f"daml/{mod_name}.daml"] = prepend_brand_header(
+                sup_code,
+                pattern=spec_pattern,
+                domain=spec_domain,
+                module_name=mod_name,
+            )
             generated_context.append(sup_code)
 
     # ------------------------------------------------------------------
@@ -281,14 +298,22 @@ def _generate_template(
     elif role == "transfer":
         role_guidance = "\nThis is a TRANSFER template. It should handle ownership transfer of the core asset."
 
-    # Inject the structured Plan only on the CORE template \u2014 lifecycle /
-    # transfer modules describe a single sub-event and the full plan would
-    # over-constrain them. The core template is what gets deployed.
+    # Inject the structured Plan AND the curated gold-standard reference
+    # only on the CORE template \u2014 lifecycle / transfer modules describe
+    # a single sub-event and the full plan would over-constrain them.
+    # The core template is what gets deployed.
     spec_block = ""
+    curated_block = ""
     if role == "core" and contract_spec:
         formatted = format_spec_for_prompt(contract_spec)
         if formatted:
             spec_block = f"\n\n{formatted}\n"
+        curated = format_curated_for_prompt(
+            contract_spec.get("pattern"),
+            contract_spec.get("domain"),
+        )
+        if curated:
+            curated_block = f"\n{curated}\n"
 
     user_msg = f"""Generate a compilable Daml module for:
 
@@ -303,7 +328,7 @@ PARTIES:
 - {party2} : Party (observer)
 
 FEATURES: {', '.join(features) if features else 'Standard ' + role + ' operations'}
-{constraints_section}{spec_block}
+{constraints_section}{spec_block}{curated_block}
 {extra_imports and f'IMPORTS NEEDED: {extra_imports}'}
 {context_section}
 {rag_section}

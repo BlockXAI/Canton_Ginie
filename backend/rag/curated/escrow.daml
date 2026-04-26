@@ -1,0 +1,60 @@
+-- =============================================================
+-- Curated reference pattern: Escrow (conditional release)
+-- =============================================================
+-- Funds / asset reference held by an arbiter on behalf of buyer
+-- and seller. Released to the seller on Confirm, returned to the
+-- buyer on Refund, with both choices controlled by the arbiter
+-- (or jointly by buyer + seller in a more complex variant).
+--
+-- Key idioms demonstrated:
+--   * Three-party signatory: arbiter holds, buyer + seller observe.
+--   * `Confirm` and `Refund` both consuming \xe2\x80\x94 the escrow has a
+--     terminal lifecycle, not a perpetual one.
+--   * Time-bounded refund window via `deadline : Time`.
+--   * Decimal field `amount` IS appropriate here (this is a financial
+--     escrow). Other patterns must NOT carry an amount field by default.
+-- =============================================================
+
+module Main where
+
+template Escrow
+  with
+    arbiter   : Party
+    buyer     : Party
+    seller    : Party
+    amount    : Decimal
+    currency  : Text
+    deadline  : Time
+    memo      : Text
+  where
+    signatory arbiter
+    observer buyer, seller
+
+    ensure amount > 0.0
+        && currency /= ""
+        && buyer /= seller
+        && arbiter /= buyer
+        && arbiter /= seller
+
+    -- Arbiter releases funds to seller. Closes the escrow.
+    choice Confirm : ()
+      controller arbiter
+      do
+        return ()
+
+    -- Arbiter refunds the buyer. Closes the escrow.
+    choice Refund : ()
+      with
+        reason : Text
+      controller arbiter
+      do
+        assertMsg "Refund reason must be supplied" (reason /= "")
+        return ()
+
+    -- After deadline, buyer may unilaterally reclaim if arbiter is silent.
+    choice ReclaimAfterDeadline : ()
+      controller buyer
+      do
+        now <- getTime
+        assertMsg "Deadline has not yet passed" (now >= deadline)
+        return ()

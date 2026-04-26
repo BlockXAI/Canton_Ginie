@@ -1,0 +1,76 @@
+-- =============================================================
+-- Curated reference pattern: Voting / DAO governance
+-- =============================================================
+-- This is a HAND-AUDITED reference example. The writer agent should
+-- imitate its STRUCTURE (field shapes, choice patterns, invariant
+-- handling), not necessarily its exact field names.
+--
+-- Key idioms demonstrated:
+--   * `voters : [Party]`  \xe2\x80\x94 NEVER `voter1, voter2, voter3...`.
+--   * One single parameterised `CastVote` choice (NOT one per voter).
+--   * Double-vote prevention via `votedYes` / `votedNo` ledgers.
+--   * Time-bounded voting via `deadline : Time` checked with `getTime`.
+--   * Descriptive `assertMsg` per invariant (NOT bare `ensure`).
+--   * Outcome string returned on `Finalize` so the result is recorded.
+-- =============================================================
+
+module Main where
+
+template Ballot
+  with
+    proposer    : Party
+    voters      : [Party]
+    proposalId  : Text
+    description : Text
+    threshold   : Int
+    deadline    : Time
+    votedYes    : [Party]
+    votedNo     : [Party]
+  where
+    signatory proposer
+    observer voters
+
+    ensure proposalId /= ""
+        && threshold > 0
+        && threshold <= length voters
+
+    -- Any eligible voter casts their single vote while the window is open.
+    -- Note: ONE choice, parameterised by `voter`, not VoteVoter1..VoteVoterN.
+    choice CastVote : ContractId Ballot
+      with
+        voter   : Party
+        inFavor : Bool
+      controller voter
+      do
+        now <- getTime
+        assertMsg "Voter is not on the eligibility list"
+          (voter `elem` voters)
+        assertMsg "Voter has already cast a YES vote"
+          (voter `notElem` votedYes)
+        assertMsg "Voter has already cast a NO vote"
+          (voter `notElem` votedNo)
+        assertMsg "Voting period has ended"
+          (now < deadline)
+        let newYes = if inFavor then voter :: votedYes else votedYes
+        let newNo  = if inFavor then votedNo else voter :: votedNo
+        create this with votedYes = newYes, votedNo = newNo
+
+    -- Any eligible party may finalize once the deadline has passed.
+    -- The choice archives the ballot and returns the outcome string.
+    choice Finalize : Text
+      with
+        finalizer : Party
+      controller finalizer
+      do
+        now <- getTime
+        assertMsg "Finalizer is not eligible"
+          (finalizer `elem` (proposer :: voters))
+        assertMsg "Voting period has not yet ended"
+          (now >= deadline)
+        let yes = length votedYes
+        let total = length voters
+        if yes >= threshold
+          then return ("PASSED: " <> proposalId
+                       <> " (" <> show yes <> "/" <> show total <> ")")
+          else return ("FAILED: " <> proposalId
+                       <> " (" <> show yes <> "/" <> show total <> ")")

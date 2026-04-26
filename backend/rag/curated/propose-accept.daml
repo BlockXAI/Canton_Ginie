@@ -1,0 +1,57 @@
+-- =============================================================
+-- Curated reference pattern: Two-party agreement (propose-accept lite)
+-- =============================================================
+-- Generic two-party contract where one side accepts terms before
+-- it activates. Useful as a structural reference for ANY pattern
+-- that needs mutual consent (escrow agreements, service contracts,
+-- supply orders, NDA, etc.).
+--
+-- Key idioms demonstrated:
+--   * Single template with `signatory partyA` and the live state
+--     reached after `Accept` is exercised.
+--   * `Accept` and `Reject` are mutually exclusive consuming choices
+--     controlled by the counterparty.
+--   * `Renegotiate` recreates with new terms \xe2\x80\x94 NEVER mutate `terms`
+--     in place; consuming-recreate gives a clean ledger history.
+-- =============================================================
+
+module Main where
+
+template Agreement
+  with
+    proposer  : Party
+    receiver  : Party
+    terms     : Text
+    accepted  : Bool
+    createdAt : Time
+  where
+    signatory proposer
+    observer receiver
+
+    ensure proposer /= receiver && terms /= ""
+
+    -- Receiver accepts the terms; flips the `accepted` flag.
+    choice Accept : ContractId Agreement
+      controller receiver
+      do
+        assertMsg "Already accepted" (not accepted)
+        create this with accepted = True
+
+    -- Receiver rejects \xe2\x80\x94 archives the proposal entirely.
+    choice Reject : ()
+      with
+        reason : Text
+      controller receiver
+      do
+        assertMsg "Rejection reason must be provided" (reason /= "")
+        return ()
+
+    -- Proposer revises terms; only valid before acceptance.
+    choice Renegotiate : ContractId Agreement
+      with
+        newTerms : Text
+      controller proposer
+      do
+        assertMsg "Cannot renegotiate after acceptance" (not accepted)
+        assertMsg "New terms must be non-empty" (newTerms /= "")
+        create this with terms = newTerms

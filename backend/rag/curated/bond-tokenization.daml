@@ -1,0 +1,65 @@
+-- =============================================================
+-- Curated reference pattern: Bond / fixed-income note
+-- =============================================================
+-- A debt instrument: issuer borrows `principal` from holder, pays
+-- `couponRate` periodically until `maturity`, then redeems the
+-- principal. This is a finance pattern \xe2\x80\x94 the `amount : Decimal`
+-- + currency fields ARE appropriate here (unlike credentials).
+--
+-- Key idioms demonstrated:
+--   * Decimal arithmetic with explicit bounds checks
+--     (`principal > 0.0`, `couponRate >= 0.0 && couponRate <= 1.0`).
+--   * Time-based lifecycle: PayCoupon and Redeem both gated on `getTime`.
+--   * Redeem is consuming and terminal; PayCoupon is consuming and
+--     RECREATES the bond with `couponsPaid` incremented.
+-- =============================================================
+
+module Main where
+
+template Bond
+  with
+    issuer       : Party
+    holder       : Party
+    principal    : Decimal
+    couponRate   : Decimal
+    currency     : Text
+    issuedAt     : Time
+    maturity     : Time
+    couponsPaid  : Int
+  where
+    signatory issuer
+    observer holder
+
+    ensure principal > 0.0
+        && couponRate >= 0.0
+        && couponRate <= 1.0
+        && currency /= ""
+        && issuer /= holder
+        && couponsPaid >= 0
+
+    -- Issuer pays the next coupon. Consuming + recreating with the
+    -- counter incremented \xe2\x80\x94 ledger-side audit trail of every payment.
+    choice PayCoupon : ContractId Bond
+      controller issuer
+      do
+        now <- getTime
+        assertMsg "Bond has matured \xe2\x80\x94 use Redeem instead"
+          (now < maturity)
+        create this with couponsPaid = couponsPaid + 1
+
+    -- Issuer redeems at maturity, repaying principal. Terminal.
+    choice Redeem : ()
+      controller issuer
+      do
+        now <- getTime
+        assertMsg "Bond has not yet matured" (now >= maturity)
+        return ()
+
+    -- Holder may transfer the bond to a new holder before maturity.
+    choice TransferHolding : ContractId Bond
+      with
+        newHolder : Party
+      controller holder
+      do
+        assertMsg "New holder must differ from issuer" (newHolder /= issuer)
+        create this with holder = newHolder
