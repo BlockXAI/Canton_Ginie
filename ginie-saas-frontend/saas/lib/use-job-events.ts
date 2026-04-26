@@ -28,6 +28,7 @@ const API_URL =
 
 export const PIPELINE_STAGES = [
   "intent",
+  "spec",
   "generate",
   "compile",
   "audit",
@@ -48,11 +49,52 @@ export interface LogEvent {
   data?: Record<string, unknown> | null;
 }
 
+export interface ContractSpecParty {
+  name?: string;
+  role?: string;
+  is_signatory?: boolean;
+  is_observer?: boolean;
+}
+
+export interface ContractSpecField {
+  name?: string;
+  type?: string;
+  required?: boolean;
+  purpose?: string;
+}
+
+export interface ContractSpecBehaviour {
+  name?: string;
+  controller?: string;
+  effect?: string;
+  description?: string;
+}
+
+export interface ContractSpecNonBehaviour {
+  name?: string;
+  reason?: string;
+}
+
+export interface ContractSpec {
+  domain?: string;
+  pattern?: string;
+  title?: string;
+  summary?: string;
+  rationale?: string;
+  parties?: ContractSpecParty[];
+  fields?: ContractSpecField[];
+  behaviours?: ContractSpecBehaviour[];
+  non_behaviours?: ContractSpecNonBehaviour[];
+  invariants?: string[];
+  test_scenarios?: string[];
+}
+
 export interface JobEventsState {
   events: LogEvent[];
   stages: Record<StageKey, StageStatus>;
   transport: "websocket" | "polling" | "connecting";
   connected: boolean;
+  spec: ContractSpec | null;
 }
 
 const initialStages = (): Record<StageKey, StageStatus> =>
@@ -100,6 +142,7 @@ export function useJobEvents(jobId: string | null): JobEventsState {
   const [transport, setTransport] =
     useState<JobEventsState["transport"]>("connecting");
   const [connected, setConnected] = useState(false);
+  const [spec, setSpec] = useState<ContractSpec | null>(null);
 
   // Track seen sequence numbers to deduplicate when history replay overlaps
   // with a few in-flight live messages.
@@ -124,6 +167,16 @@ export function useJobEvents(jobId: string | null): JobEventsState {
       return merged;
     });
     setStages((prev) => fresh.reduce(applyEventToStages, prev));
+    // Capture the structured plan as soon as the spec_synth node emits it.
+    // The "spec_ready" event carries the full Spec payload under data.spec.
+    for (const ev of fresh) {
+      if (ev.e === "spec_ready" && ev.data && typeof ev.data === "object") {
+        const incomingSpec = (ev.data as { spec?: ContractSpec }).spec;
+        if (incomingSpec && typeof incomingSpec === "object") {
+          setSpec(incomingSpec);
+        }
+      }
+    }
   };
 
   // Eager HTTP fallback so the log shows up even before the WS opens.
@@ -145,6 +198,7 @@ export function useJobEvents(jobId: string | null): JobEventsState {
     setStages(initialStages());
     setTransport("connecting");
     setConnected(false);
+    setSpec(null);
 
     if (!jobId) return () => undefined;
 
@@ -220,5 +274,5 @@ export function useJobEvents(jobId: string | null): JobEventsState {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);
 
-  return { events, stages, transport, connected };
+  return { events, stages, transport, connected, spec };
 }

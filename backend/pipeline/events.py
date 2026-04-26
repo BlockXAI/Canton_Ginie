@@ -39,6 +39,7 @@ def _next_seq(job_id: str) -> int:
 # failed). Keep names lowercase + stable — they appear in event_type strings.
 PIPELINE_STAGES: tuple[str, ...] = (
     "intent",
+    "spec",
     "generate",
     "compile",
     "audit",

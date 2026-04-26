@@ -18,6 +18,7 @@ import re
 import structlog
 
 from security.generation_rules import format_rules_for_prompt
+from pipeline.spec_synth import format_spec_for_prompt
 from utils.llm_client import call_llm
 
 logger = structlog.get_logger()
@@ -91,6 +92,7 @@ _SECURITY_RULES_BLOCK = format_rules_for_prompt()
 def run_project_writer_agent(
     structured_intent: dict,
     rag_context: list[str] | None = None,
+    contract_spec: dict | None = None,
 ) -> dict:
     """Multi-stage generation returning a dict of files + deterministic daml.yaml.
 
@@ -146,6 +148,7 @@ def run_project_writer_agent(
         extra_imports="",
         rag_context=rag_context,
         prior_context=[],
+        contract_spec=contract_spec,
     )
     if not core_code:
         logger.error("Core template generation failed")
@@ -243,6 +246,7 @@ def _generate_template(
     rag_context: list[str],
     prior_context: list[str],
     role: str = "core",
+    contract_spec: dict | None = None,
 ) -> str | None:
     """Generate a single DAML template file."""
     party1 = parties[0] if parties else "issuer"
@@ -277,6 +281,15 @@ def _generate_template(
     elif role == "transfer":
         role_guidance = "\nThis is a TRANSFER template. It should handle ownership transfer of the core asset."
 
+    # Inject the structured Plan only on the CORE template \u2014 lifecycle /
+    # transfer modules describe a single sub-event and the full plan would
+    # over-constrain them. The core template is what gets deployed.
+    spec_block = ""
+    if role == "core" and contract_spec:
+        formatted = format_spec_for_prompt(contract_spec)
+        if formatted:
+            spec_block = f"\n\n{formatted}\n"
+
     user_msg = f"""Generate a compilable Daml module for:
 
 MODULE: {module_name}
@@ -290,7 +303,7 @@ PARTIES:
 - {party2} : Party (observer)
 
 FEATURES: {', '.join(features) if features else 'Standard ' + role + ' operations'}
-{constraints_section}
+{constraints_section}{spec_block}
 {extra_imports and f'IMPORTS NEEDED: {extra_imports}'}
 {context_section}
 {rag_section}

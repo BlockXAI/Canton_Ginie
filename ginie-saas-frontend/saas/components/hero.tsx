@@ -222,6 +222,10 @@ export function Hero(): ReactNode {
                       </>
                     )}
                   </button>
+
+                  <p className="text-[11px] text-neutral-400 text-center min-[850px]:text-left">
+                    Canton.Ginie is an AI and can make mistakes. Check important info before deploying to a production network.
+                  </p>
                 </div>
 
                 {/* Right: Pipeline info */}

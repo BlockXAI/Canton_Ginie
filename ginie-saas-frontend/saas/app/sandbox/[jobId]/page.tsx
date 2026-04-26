@@ -4,8 +4,10 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useJobStatus } from "@/lib/use-job-status";
 import { useJobEvents } from "@/lib/use-job-events";
+import type { ContractSpec } from "@/lib/use-job-events";
 import { StageStrip } from "@/components/sandbox/StageStrip";
 import { LiveLog } from "@/components/sandbox/LiveLog";
+import { SpecPanel } from "@/components/sandbox/SpecPanel";
 import {
   ArrowLeft,
   Loader2,
@@ -61,6 +63,7 @@ interface JobResult {
   deployment_note?: string;
   diagram_mermaid?: string;
   project_files?: Record<string, string>;
+  contract_spec?: ContractSpec | null;
   audit_reports?: {
     json?: string;
     markdown?: string;
@@ -139,7 +142,7 @@ export default function SandboxPage() {
   const jobId = params.jobId as string;
 
   const { status, transport } = useJobStatus(jobId);
-  const { events: liveEvents, stages: liveStages } = useJobEvents(jobId);
+  const { events: liveEvents, stages: liveStages, spec: liveSpec } = useJobEvents(jobId);
   const [result, setResult] = useState<JobResult | null>(null);
   const [activeTab, setActiveTab] = useState<"code" | "diagram" | "files">("code");
   const [showFindings, setShowFindings] = useState(false);
@@ -258,6 +261,20 @@ export default function SandboxPage() {
             )}
           </p>
         </div>
+
+        {/* Structured contract Plan (output of the spec_synth stage).
+            Shown as soon as the planner emits `spec_ready`, persists for
+            the rest of the page lifecycle, and is replayed from the event
+            log on reload. Falls back to the spec attached to the final
+            result payload. */}
+        {(liveSpec || result?.contract_spec) && (
+          <div className="mb-6">
+            <SpecPanel
+              spec={(liveSpec ?? result?.contract_spec) as ContractSpec}
+              defaultOpen
+            />
+          </div>
+        )}
 
         {/* Pipeline stage strip + live log feed */}
         {status && (

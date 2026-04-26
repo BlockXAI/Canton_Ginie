@@ -34,6 +34,7 @@ class JobResultResponse(BaseModel):
     explorer_link: Optional[str] = None
     generated_code: Optional[str] = None
     structured_intent: Optional[dict] = None
+    contract_spec: Optional[dict] = None
     attempt_number: Optional[int] = None
     error_message: Optional[str] = None
     compile_errors: Optional[list] = None

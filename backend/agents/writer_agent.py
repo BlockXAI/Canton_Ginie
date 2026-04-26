@@ -3,6 +3,7 @@ import structlog
 
 from rag.vector_store import search_daml_patterns, search_signatures
 from security.generation_rules import format_rules_for_prompt
+from pipeline.spec_synth import format_spec_for_prompt
 from utils.llm_client import call_llm
 
 logger = structlog.get_logger()
@@ -92,7 +93,11 @@ template {template_name}
 """
 
 
-def run_writer_agent(structured_intent: dict, rag_context: list[str] = None) -> dict:
+def run_writer_agent(
+    structured_intent: dict,
+    rag_context: list[str] = None,
+    contract_spec: dict | None = None,
+) -> dict:
     parties = structured_intent.get("parties", ["issuer", "investor"])
     features = structured_intent.get("features", [])
     templates = structured_intent.get("daml_templates_needed", ["Main"])
@@ -122,6 +127,26 @@ def run_writer_agent(structured_intent: dict, rag_context: list[str] = None) -> 
     if constraints:
         constraints_section = "\nBUSINESS CONSTRAINTS:\n" + "\n".join(f"- {c}" for c in constraints)
 
+    # Spec block (Plan-stage output) \u2014 the strongest signal we have. When
+    # present, it lists every behaviour, every non-behaviour, every field
+    # the contract must contain. We override the default "include amount :
+    # Decimal" instruction in this case because credentials/badges/etc.
+    # legitimately have no monetary amount.
+    spec_block = format_spec_for_prompt(contract_spec) if contract_spec else ""
+    spec_section = f"\n\n{spec_block}\n" if spec_block else ""
+
+    if contract_spec:
+        # When we have a structured plan, the plan dictates fields \u2014 do
+        # NOT force an `amount` field on every contract.
+        amount_clause = (
+            "Include the EXACT fields listed in the Plan above, with their\n"
+            "Daml types. Choose any one numeric or text field for the\n"
+            "`ensure` clause that expresses a meaningful invariant from\n"
+            "the Plan's invariants list."
+        )
+    else:
+        amount_clause = "Include an amount : Decimal field with ensure amount > 0.0."
+
     user_message = f"""Generate a complete, compilable Daml module for:
 
 CONTRACT TYPE: {contract_type}
@@ -137,12 +162,12 @@ REQUIRED FEATURES:
 
 CHOICES TO IMPLEMENT:
 {chr(10).join(f'- {c}' for c in choices[:3]) if choices else '- Transfer'}
-{constraints_section}
+{constraints_section}{spec_section}
 {rag_section}
 
 IMPORTANT: Use module name 'Main', template name '{template_name}'.
 Use {party1} as signatory, {party2} as observer.
-Include an amount : Decimal field with ensure amount > 0.0.
+{amount_clause}
 Do NOT include any Script test functions.
 Start your response with: module Main where"""
 

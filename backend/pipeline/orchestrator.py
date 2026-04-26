@@ -6,6 +6,7 @@ from langgraph.graph.state import CompiledStateGraph
 from agents.intent_agent import run_intent_agent
 from agents.writer_agent import run_writer_agent, fetch_rag_context
 from agents.project_writer_agent import run_project_writer_agent
+from pipeline.spec_synth import synthesize_spec
 from agents.compile_agent import run_compile_agent
 from agents.fix_agent import run_fix_agent
 from agents.deploy_agent import run_deploy_agent
@@ -94,8 +95,72 @@ def intent_node(state: dict) -> dict:
     return {
         **state,
         "structured_intent": intent,
-        "current_step":      "Retrieving DAML patterns...",
-        "progress":          20,
+        "current_step":      "Synthesising contract plan...",
+        "progress":          18,
+    }
+
+
+def spec_synth_node(state: dict) -> dict:
+    """Synthesise a structured contract spec from the user prompt + intent.
+
+    The spec is a strict checklist (parties / fields / behaviours /
+    non-behaviours / invariants / test scenarios) that the writer agent
+    consumes as a constraint and the auditor will later use as a
+    conformance reference. This stage is best-effort: failures here never
+    block code generation \u2014 the pipeline simply falls back to the
+    intent-only writer prompt.
+    """
+    logger.info("Node: spec_synth", job_id=state.get("job_id"))
+    _push_status(state, "Synthesising contract plan...", 22)
+    emit_stage_started(state, "spec", "Drafting a structured contract plan\u2026")
+
+    spec = None
+    try:
+        spec = synthesize_spec(state.get("user_input", ""), state.get("structured_intent") or {})
+    except Exception as e:
+        logger.warning("Spec synth crashed, continuing without spec", error=str(e))
+        spec = None
+
+    if not spec:
+        # Soft skip: mark the stage completed with a warning log so the
+        # strip turns green (pipeline is healthy) but the user can still
+        # see in the live log that the planner declined to produce a spec.
+        emit_log(
+            state,
+            "Spec synthesis skipped \u2014 generator will use intent only",
+            level="warn",
+        )
+        emit_stage_completed(state, "spec", "No structured plan produced (continuing)")
+        return {
+            **state,
+            "contract_spec": None,
+            "current_step":  "Retrieving DAML patterns...",
+            "progress":      24,
+        }
+
+    # Push the full spec out to the live-log + event log so the frontend
+    # can render the Plan panel before any code is written.
+    emit(
+        state,
+        "spec_ready",
+        f"Plan ready \u2014 {spec.get('pattern', 'generic')} ({len(spec.get('behaviours') or [])} behaviour(s), "
+        f"{len(spec.get('non_behaviours') or [])} non-behaviour(s))",
+        level="success",
+        data={"spec": spec},
+    )
+    emit_stage_completed(
+        state,
+        "spec",
+        "Plan synthesised",
+        domain=spec.get("domain"),
+        pattern=spec.get("pattern"),
+    )
+
+    return {
+        **state,
+        "contract_spec": spec,
+        "current_step":  "Retrieving DAML patterns...",
+        "progress":      26,
     }
 
 
@@ -135,6 +200,7 @@ def generate_node(state: dict) -> dict:
     result = run_writer_agent(
         structured_intent=state["structured_intent"],
         rag_context=state.get("rag_context", []),
+        contract_spec=state.get("contract_spec"),
     )
     if not result["success"]:
         logger.error("Generate node failed", error=result.get("error"))
@@ -186,6 +252,7 @@ def generate_project_node(state: dict) -> dict:
     result = run_project_writer_agent(
         structured_intent=state["structured_intent"],
         rag_context=state.get("rag_context", []),
+        contract_spec=state.get("contract_spec"),
     )
     if not result["success"]:
         logger.error("Project generate node failed", error=result.get("error"))
@@ -689,6 +756,7 @@ def _build_pipeline() -> CompiledStateGraph:
     graph = StateGraph(dict)
 
     graph.add_node("intent",           intent_node)
+    graph.add_node("spec_synth",       spec_synth_node)
     graph.add_node("rag",              rag_node)
     graph.add_node("generate",         generate_node)
     graph.add_node("generate_project", generate_project_node)
@@ -702,7 +770,8 @@ def _build_pipeline() -> CompiledStateGraph:
 
     graph.set_entry_point("intent")
 
-    graph.add_conditional_edges("intent", _route_after_intent, {"rag": "rag", "error": "error"})
+    graph.add_conditional_edges("intent", _route_after_intent, {"rag": "spec_synth", "error": "error"})
+    graph.add_edge("spec_synth", "rag")
     graph.add_conditional_edges(
         "rag",
         _route_after_rag,
@@ -739,6 +808,7 @@ def run_pipeline(job_id: str, user_input: str, canton_environment: str = "sandbo
         "job_id":             job_id,
         "user_input":         user_input,
         "structured_intent":  {},
+        "contract_spec":      None,
         "rag_context":        [],
         "generated_code":     "",
         "compile_result":     "",

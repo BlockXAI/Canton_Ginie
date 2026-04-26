@@ -7,6 +7,7 @@ import {
   Rocket,
   CheckCheck,
   Brain,
+  ClipboardList,
   Loader2,
   Check,
   X,
@@ -16,7 +17,8 @@ import type { StageKey, StageStatus } from "@/lib/use-job-events";
 import { PIPELINE_STAGES } from "@/lib/use-job-events";
 
 const STAGE_LABEL: Record<StageKey, string> = {
-  intent: "Plan",
+  intent: "Intent",
+  spec: "Plan",
   generate: "Generate",
   compile: "Compile",
   audit: "Audit",
@@ -26,6 +28,7 @@ const STAGE_LABEL: Record<StageKey, string> = {
 
 const STAGE_ICON: Record<StageKey, React.ComponentType<{ className?: string }>> = {
   intent: Brain,
+  spec: ClipboardList,
   generate: Sparkles,
   compile: Code2,
   audit: ShieldCheck,

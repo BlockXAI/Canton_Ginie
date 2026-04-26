@@ -108,7 +108,10 @@ export function Footer(): ReactNode {
             </nav>
           </div>
 
-          <div className="mt-16 pt-6">
+          <div className="mt-16 pt-6 space-y-2">
+            <p className="text-xs text-neutral-900/60 text-center">
+              Canton.Ginie is an AI and can make mistakes. Check important info before deploying to a production network.
+            </p>
             <p className="text-sm text-neutral-900/50 text-center">
               © {new Date().getFullYear()} Ginie DAML by BlockXAI. All rights reserved.
             </p>
