@@ -115,9 +115,40 @@ async def list_parties():
     """List all parties known to the ledger.
 
     Returns party identifiers, display names, and whether they are local.
-    Similar to `daml ledger list-parties`.
+    Similar to ``daml ledger list-parties``.
+
+    Soft-fails: if the Canton JSON API is unreachable or rejects the
+    request (which happens when the bootstrap JWT scope grows past Canton's
+    accepted size on a long-lived shared sandbox), we return an empty list
+    with a ``ledger_error`` field rather than 500-ing. The Explorer UI then
+    renders an empty state instead of a red error box, and authenticated
+    users still see their own parties via ``/me/parties``.
     """
-    data = await _json_api_request("GET", "/v1/parties")
+    try:
+        data = await _json_api_request("GET", "/v1/parties")
+    except HTTPException as e:
+        logger.warning(
+            "/ledger/parties soft-failing: Canton call failed",
+            status=e.status_code,
+            detail=str(e.detail)[:200],
+        )
+        return {
+            "parties": [],
+            "count": 0,
+            "ledger_url": _canton_url(),
+            "environment": _canton_env(),
+            "ledger_error": f"Canton {e.status_code}: {str(e.detail)[:200]}",
+        }
+    except Exception as e:
+        logger.warning("/ledger/parties soft-failing: unexpected error", error=str(e))
+        return {
+            "parties": [],
+            "count": 0,
+            "ledger_url": _canton_url(),
+            "environment": _canton_env(),
+            "ledger_error": f"Unexpected: {str(e)[:200]}",
+        }
+
     result = data.get("result", [])
 
     parties = []

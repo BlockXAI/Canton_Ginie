@@ -375,20 +375,50 @@ function ContractsTab({
   );
 }
 
-function PartiesTab({ relevantPartyIds, currentPartyId }: { relevantPartyIds: Set<string>; currentPartyId: string | null }) {
+function PartiesTab({
+  relevantPartyIds,
+  currentPartyId,
+  token,
+}: {
+  relevantPartyIds: Set<string>;
+  currentPartyId: string | null;
+  token: string | null;
+}) {
   const [parties, setParties] = useState<Party[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // ``user-owned`` when /me/parties responded, ``ledger`` when we fell back
+  // to the global Canton listing. Drives the on-screen scope hint.
+  const [scope, setScope] = useState<"user-owned" | "ledger">("ledger");
 
   const fetchParties = async () => {
     setLoading(true);
     setError("");
     try {
+      // Authenticated path: ask the backend for ONLY this user's parties.
+      // Sourced entirely from our Postgres tables, so it's immune to the
+      // shared-sandbox 500s that ``/ledger/parties`` is prone to.
+      if (token) {
+        const resp = await fetch(`${API_URL}/me/parties`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (resp.ok) {
+          const data = (await resp.json()) as { parties?: Party[]; scope?: string };
+          setParties(data.parties ?? []);
+          setScope("user-owned");
+          return;
+        }
+        // 4xx/5xx \u2014 fall through to the public ledger listing.
+      }
+
       const resp = await fetch(`${API_URL}/ledger/parties`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data: unknown = await resp.json();
-      const parsed = data as { parties?: Party[] };
-      setParties(parsed.parties ?? []);
+      const data = (await resp.json()) as { parties?: Party[]; ledger_error?: string };
+      setParties(data.parties ?? []);
+      setScope("ledger");
+      if (data.ledger_error && (data.parties ?? []).length === 0) {
+        setError(`Canton ledger temporarily unavailable: ${data.ledger_error}`);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to fetch parties");
     } finally {
@@ -396,7 +426,7 @@ function PartiesTab({ relevantPartyIds, currentPartyId }: { relevantPartyIds: Se
     }
   };
 
-  useEffect(() => { void fetchParties(); }, []);
+  useEffect(() => { void fetchParties(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [token]);
 
   if (loading) {
     return (
@@ -416,21 +446,31 @@ function PartiesTab({ relevantPartyIds, currentPartyId }: { relevantPartyIds: Se
     );
   }
 
-  // Show only parties that are relevant to the authenticated user: their own
-  // current party, plus any parties that appear as signatories/observers in
-  // contracts they have deployed. This hides unrelated parties created by
-  // other users on the shared sandbox.
-  const visible = parties.filter((p) => {
-    if (currentPartyId && p.identifier === currentPartyId) return true;
-    if (relevantPartyIds.has(p.identifier)) return true;
-    return false;
-  });
+  // Show only parties relevant to the authenticated user. When the
+  // backend already scoped the response to ``user-owned`` we trust it
+  // verbatim — those rows are sourced from RegisteredParty +
+  // DeployedContract joined to the user's email, so client-side
+  // filtering would only re-introduce false negatives for the user's
+  // own historical parties. When the response came from /ledger/parties
+  // (unauthenticated or fallback path) we still apply the legacy
+  // counterparty filter so the user doesn't see strangers' parties on
+  // the shared sandbox.
+  const visible =
+    scope === "user-owned"
+      ? parties
+      : parties.filter((p) => {
+          if (currentPartyId && p.identifier === currentPartyId) return true;
+          if (relevantPartyIds.has(p.identifier)) return true;
+          return false;
+        });
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <span className="text-sm text-muted-foreground/80">
-          {visible.length} of {parties.length} parties (yours &amp; counterparties)
+          {scope === "user-owned"
+            ? `${visible.length} part${visible.length === 1 ? "y" : "ies"} you own`
+            : `${visible.length} of ${parties.length} parties (yours & counterparties)`}
         </span>
         <button onClick={() => void fetchParties()} className="rounded-lg border border-border bg-foreground/5 p-2 text-muted-foreground hover:bg-foreground/10 hover:text-foreground">
           <RefreshCw className="h-4 w-4" />
@@ -873,7 +913,11 @@ export default function ExplorerPage() {
             <ContractsTab partyId={partyId} token={token} onContractsLoaded={setUserContracts} />
           )}
           {activeTab === "parties" && (
-            <PartiesTab relevantPartyIds={relevantPartyIds} currentPartyId={partyId} />
+            <PartiesTab
+              relevantPartyIds={relevantPartyIds}
+              currentPartyId={partyId}
+              token={token}
+            />
           )}
           {activeTab === "packages" && <PackagesTab />}
           {activeTab === "verify" && <VerifyTab />}

@@ -580,6 +580,128 @@ async def list_my_jobs(user: dict = Depends(get_current_user)):
     return {"jobs": out, "count": len(out), "user_email": user_email}
 
 
+@router.get("/me/parties")
+async def list_my_parties(user: dict = Depends(get_current_user)):
+    """Return only the Canton parties this authenticated user owns.
+
+    Sourced from our own Postgres tables \u2014 no Canton call required, so
+    this works even when the ledger JSON API is down (which is what makes
+    ``/ledger/parties`` flake with HTTP 500 in shared sandbox environments
+    where the JWT scope grows unbounded).
+
+    Owned parties are the union of:
+      * The party linked to the user's ``EmailAccount`` (their primary
+        signing identity).
+      * Every distinct ``DeployedContract.party_id`` they have ever
+        deployed under \u2014 the deploy agent rotates parties per session,
+        so a single user can accumulate several legitimate identities.
+      * The deploy parties (signatories / observers) recorded in each of
+        their job's ``result_json.parties`` blob.
+
+    The response shape matches ``/ledger/parties`` so the frontend can
+    swap endpoints without other changes.
+    """
+    user_email = _user_email_from_claims(user)
+    if not user_email:
+        return {
+            "parties": [],
+            "count": 0,
+            "user_email": None,
+            "environment": get_settings().canton_environment,
+            "scope": "user-owned",
+        }
+
+    settings = get_settings()
+    canton_env = settings.canton_environment
+    seen: dict[str, dict] = {}
+
+    def _add(party_id: str, display_name: str = "", source: str = "deployed"):
+        if not party_id or not isinstance(party_id, str):
+            return
+        if party_id in seen:
+            # Upgrade display name if we now have a better one.
+            if display_name and not seen[party_id].get("displayName"):
+                seen[party_id]["displayName"] = display_name
+            return
+        seen[party_id] = {
+            "identifier": party_id,
+            "displayName": display_name or party_id.split("::", 1)[0],
+            "isLocal": True,
+            "source": source,
+        }
+
+    try:
+        from db.session import get_db_session
+        from db.models import (
+            DeployedContract,
+            EmailAccount,
+            JobHistory,
+            RegisteredParty,
+        )
+        with get_db_session() as session:
+            # 1. Primary identity from the email account.
+            account = (
+                session.query(EmailAccount)
+                .filter(EmailAccount.email == user_email)
+                .first()
+            )
+            if account and account.party_id:
+                rp = (
+                    session.query(RegisteredParty)
+                    .filter(RegisteredParty.party_id == account.party_id)
+                    .first()
+                )
+                _add(
+                    account.party_id,
+                    display_name=(rp.display_name if rp else "") or (account.display_name or ""),
+                    source="primary",
+                )
+
+            # 2. Every party_id from this user's deployed contracts.
+            contracts = (
+                session.query(DeployedContract)
+                .filter(DeployedContract.user_email == user_email)
+                .filter(DeployedContract.canton_env == canton_env)
+                .all()
+            )
+            for c in contracts:
+                if c.party_id:
+                    _add(c.party_id, source="deployed")
+
+            # 3. Parties referenced inside the user's job result_json blobs.
+            jobs = (
+                session.query(JobHistory)
+                .filter(JobHistory.user_email == user_email)
+                .filter(JobHistory.canton_env == canton_env)
+                .all()
+            )
+            for j in jobs:
+                rj = j.result_json if isinstance(j.result_json, dict) else {}
+                rj_parties = rj.get("parties")
+                if isinstance(rj_parties, dict):
+                    for role, pid in rj_parties.items():
+                        if isinstance(pid, str):
+                            _add(pid, display_name=str(role), source="job")
+                elif isinstance(rj_parties, list):
+                    for pid in rj_parties:
+                        if isinstance(pid, str):
+                            _add(pid, source="job")
+    except Exception as e:
+        logger.warning("/me/parties query failed", error=str(e), user_email=user_email)
+        raise HTTPException(status_code=500, detail="Failed to load your parties")
+
+    parties = list(seen.values())
+    parties.sort(key=lambda p: (p.get("source") != "primary", p["identifier"]))
+
+    return {
+        "parties": parties,
+        "count": len(parties),
+        "user_email": user_email,
+        "environment": canton_env,
+        "scope": "user-owned",
+    }
+
+
 @router.delete("/me/jobs/{job_id}")
 async def delete_my_job(job_id: str, user: dict = Depends(get_current_user)):
     """Delete a job (and its events / deployed-contract row) from history.
@@ -826,6 +948,15 @@ async def download_source(job_id: str):
     """Download the full Daml project source as a zip archive.
 
     Excludes build artifacts (.daml/dist, .daml/build) to keep the archive small.
+
+    Resolution priority:
+      1. ``result_json['project_files']`` (or ``original_project_files``) \u2014
+         a ``{relative_path: content}`` map persisted in Postgres. Survives
+         Railway / ephemeral-disk container restarts.
+      2. ``result_json['generated_code']`` \u2014 single-template fallback when
+         the pipeline ran in single-file mode (no project_files map).
+      3. ``_resolve_project_dir`` lookup on disk (faster on a warm container,
+         picks up any locally-generated artefacts the user may want).
     """
     data = _get_job(job_id)
     if not data:
@@ -833,33 +964,90 @@ async def download_source(job_id: str):
     if data.get("status") not in ("complete", "failed"):
         raise HTTPException(status_code=400, detail="Job is still in progress")
 
+    arc_root = job_id[:8]
+    skip_dirs = {".daml", "__pycache__", "dist", ".vscode"}
+
+    # Layer 1: Project-files dict embedded in result_json. This is the
+    # canonical, restart-safe source of truth.
+    project_files = data.get("project_files") or data.get("original_project_files")
+    if isinstance(project_files, dict) and project_files:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for rel_path, content in project_files.items():
+                if not isinstance(rel_path, str) or not isinstance(content, str):
+                    continue
+                # Skip any build artefacts that may have leaked into the dict
+                head_parts = rel_path.replace("\\", "/").split("/")
+                if any(part in skip_dirs for part in head_parts):
+                    continue
+                arc = os.path.join(arc_root, rel_path).replace("\\", "/")
+                zf.writestr(arc, content)
+        buf.seek(0)
+        logger.info(
+            "Serving source zip from result_json",
+            job_id=job_id,
+            files=len(project_files),
+        )
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{arc_root}-source.zip"'},
+        )
+
+    # Layer 2: single-file generated code (non-project mode).
+    generated_code = data.get("generated_code")
+    if isinstance(generated_code, str) and generated_code.strip():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{arc_root}/daml/Main.daml", generated_code)
+            # Minimal daml.yaml so the user can `daml build` immediately
+            yaml_text = (
+                "sdk-version: 2.10.4\n"
+                f"name: ginie-{arc_root}\n"
+                "source: daml\n"
+                "version: 0.0.1\n"
+                "dependencies:\n"
+                "  - daml-prim\n"
+                "  - daml-stdlib\n"
+            )
+            zf.writestr(f"{arc_root}/daml.yaml", yaml_text)
+        buf.seek(0)
+        logger.info("Serving source zip synthesised from generated_code", job_id=job_id)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{arc_root}-source.zip"'},
+        )
+
+    # Layer 3: on-disk project directory (warm container only).
     project_dir = _resolve_project_dir(job_id)
     if not project_dir:
         raise HTTPException(
             status_code=404,
-            detail="Project directory not found on disk (may have been cleaned up).",
+            detail=(
+                "Project source not available. The job did not persist a "
+                "project_files dict or generated_code, and the on-disk "
+                "project directory is gone (the container has restarted)."
+            ),
         )
 
-    # Zip project in memory, skipping build artifacts
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(project_dir):
-            # Skip build directories
-            dirs[:] = [d for d in dirs if d not in (".daml", "__pycache__", "dist")]
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
             for fname in files:
                 full = os.path.join(root, fname)
                 rel = os.path.relpath(full, project_dir)
                 try:
-                    zf.write(full, arcname=os.path.join(job_id[:8], rel))
+                    zf.write(full, arcname=os.path.join(arc_root, rel))
                 except OSError:
                     continue
     buf.seek(0)
-
-    logger.info("Serving source zip download", job_id=job_id, project_dir=project_dir)
+    logger.info("Serving source zip from disk", job_id=job_id, project_dir=project_dir)
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{job_id[:8]}-source.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{arc_root}-source.zip"'},
     )
 
 
